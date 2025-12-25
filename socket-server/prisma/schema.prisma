@@ -1,0 +1,352 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  plan      String   @default("free")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  computers      Computer[]
+  computerGroups ComputerGroup[]
+  blockRules     BlockRule[]
+  settings       Setting[]
+  alerts         Alert[]
+  auditLogs      AuditLog[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  password       String
+  name           String
+  role           String       @default("VIEWER") // ADMIN, MANAGER, VIEWER
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model ComputerGroup {
+  id             String       @id @default(cuid())
+  name           String
+  color          String       @default("#3B82F6")
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  computers      Computer[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model Computer {
+  id             String         @id @default(cuid())
+  name           String
+  hostname       String
+  ipAddress      String?
+  macAddress     String?
+  osType         String         @default("windows") // windows, macos, linux
+  osVersion      String?
+  status         String         @default("OFFLINE") // ONLINE, OFFLINE, LOCKED
+  isLocked       Boolean        @default(false)
+  lastSeen       DateTime?
+  cpuUsage       Float?
+  memoryUsage    Float?
+  diskUsage      Float?
+  agentVersion   String?
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  groupId        String?
+  group          ComputerGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  activityLogs    ActivityLog[]
+  screenshots     Screenshot[]
+  recordings      Recording[]
+  alerts          Alert[]
+  keylogs         Keylog[]
+  deviceCommands  DeviceCommand[]
+  firewallRules   FirewallRule[]
+  remoteSessions  RemoteSession[]
+  fileTransfers   FileTransfer[]
+  clipboardLogs   ClipboardLog[]
+  processLogs     ProcessLog[]
+  websiteLogs     WebsiteLog[]
+
+  @@index([organizationId])
+  @@index([groupId])
+}
+
+model ActivityLog {
+  id              String    @id @default(cuid())
+  computerId      String
+  computer        Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  type            String?   // APP, WEBSITE, IDLE
+  applicationName String    @default("Unknown")
+  windowTitle     String    @default("")
+  title           String?
+  details         String?
+  duration        Int       @default(0) // duration in milliseconds
+  startTime       DateTime  @default(now())
+  endTime         DateTime?
+  startedAt       DateTime? // legacy field
+  endedAt         DateTime?
+  category        String?   // DEVELOPMENT, PRODUCTIVITY, COMMUNICATION, ENTERTAINMENT, SOCIAL, OTHER
+
+  @@index([computerId])
+  @@index([startTime])
+}
+
+model Screenshot {
+  id           String   @id @default(cuid())
+  computerId   String
+  computer     Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  imageUrl     String?
+  filePath     String?
+  fileSize     Int      @default(0)
+  activeWindow String?
+  capturedAt   DateTime @default(now())
+
+  @@index([computerId])
+  @@index([capturedAt])
+}
+
+model WebsiteLog {
+  id         String   @id @default(cuid())
+  computerId String
+  computer   Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  url        String
+  title      String?
+  browser    String?
+  duration   Int      @default(0)
+  category   String?
+  visitedAt  DateTime @default(now())
+
+  @@index([computerId])
+  @@index([visitedAt])
+}
+
+model Recording {
+  id           String    @id @default(cuid())
+  computerId   String
+  computer     Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  videoUrl     String?
+  filePath     String?
+  fileName     String?
+  fileSize     Int       @default(0) // in bytes
+  thumbnailUrl String?
+  status       String    @default("RECORDING") // RECORDING, COMPLETED, FAILED
+  startedAt    DateTime  @default(now())
+  endedAt      DateTime?
+  duration     Int       @default(0) // duration in seconds
+
+  @@index([computerId])
+  @@index([startedAt])
+  @@index([status])
+}
+
+model BlockRule {
+  id             String       @id @default(cuid())
+  type           String       // WEBSITE, APP
+  pattern        String
+  action         String       @default("BLOCK") // BLOCK, WARN, LOG
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  groupIds       String?      // comma-separated group IDs, null = all groups
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model Alert {
+  id             String       @id @default(cuid())
+  type           String       // POLICY_VIOLATION, IDLE, OFFLINE, SUSPICIOUS
+  message        String
+  computerId     String?
+  computer       Computer?    @relation(fields: [computerId], references: [id], onDelete: SetNull)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  isRead         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([computerId])
+  @@index([createdAt])
+}
+
+model Setting {
+  id             String       @id @default(cuid())
+  key            String
+  value          String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+}
+
+// Keylogging - stores captured keystrokes
+model Keylog {
+  id          String   @id @default(cuid())
+  computerId  String
+  computer    Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  windowTitle String?
+  application String?
+  keystrokes  String   // encrypted keystroke data
+  capturedAt  DateTime @default(now())
+
+  @@index([computerId])
+  @@index([capturedAt])
+}
+
+// Device Commands - remote actions sent to computers
+model DeviceCommand {
+  id          String    @id @default(cuid())
+  computerId  String
+  computer    Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  command     String    // LOCK, UNLOCK, SHUTDOWN, RESTART, MESSAGE, LOGOFF, SLEEP, EXECUTE
+  payload     String?   // JSON payload for command parameters
+  status      String    @default("PENDING") // PENDING, SENT, EXECUTED, FAILED
+  sentAt      DateTime?
+  executedAt  DateTime?
+  response    String?   // Response from the agent
+  createdAt   DateTime  @default(now())
+  createdBy   String?   // User ID who issued the command
+
+  @@index([computerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Firewall Rules - network control per computer
+model FirewallRule {
+  id          String   @id @default(cuid())
+  computerId  String
+  computer    Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  name        String
+  direction   String   // INBOUND, OUTBOUND, BOTH
+  action      String   // ALLOW, BLOCK
+  protocol    String   // TCP, UDP, ICMP, ANY
+  port        String?  // port number or range (e.g., "80", "8080-8090", "*")
+  remoteIp    String?  // IP address or CIDR (e.g., "192.168.1.1", "10.0.0.0/8", "*")
+  application String?  // Application path or name
+  isActive    Boolean  @default(true)
+  priority    Int      @default(100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([computerId])
+}
+
+// Remote Sessions - remote desktop/control sessions
+model RemoteSession {
+  id          String    @id @default(cuid())
+  computerId  String
+  computer    Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  userId      String    // User who initiated the session
+  sessionType String    // VIEW, CONTROL, SHELL
+  status      String    @default("PENDING") // PENDING, ACTIVE, ENDED, FAILED
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  sessionKey  String?   // WebRTC/connection key
+
+  @@index([computerId])
+  @@index([userId])
+  @@index([status])
+}
+
+// File Transfers - remote file operations
+model FileTransfer {
+  id           String    @id @default(cuid())
+  computerId   String
+  computer     Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  direction    String    // UPLOAD, DOWNLOAD
+  localPath    String
+  remotePath   String
+  fileName     String
+  fileSize     Int       @default(0)
+  status       String    @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, FAILED
+  progress     Int       @default(0)
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  initiatedBy  String?   // User ID
+
+  @@index([computerId])
+  @@index([status])
+}
+
+// Clipboard Logs - clipboard monitoring
+model ClipboardLog {
+  id          String   @id @default(cuid())
+  computerId  String
+  computer    Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  contentType String   // TEXT, IMAGE, FILE
+  content     String   // Text content or file path reference
+  application String?  // Source application
+  capturedAt  DateTime @default(now())
+
+  @@index([computerId])
+  @@index([capturedAt])
+}
+
+// Process Logs - running processes monitoring
+model ProcessLog {
+  id          String    @id @default(cuid())
+  computerId  String
+  computer    Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  processName String
+  processId   Int
+  path        String?
+  cpuUsage    Float?
+  memoryUsage Float?
+  username    String?
+  startedAt   DateTime?
+  endedAt     DateTime?
+  capturedAt  DateTime  @default(now())
+
+  @@index([computerId])
+  @@index([capturedAt])
+}
+
+// Audit Logs - admin action logging for compliance
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?
+  userEmail      String?
+  action         String       // CREATE, UPDATE, DELETE, VIEW, LOGIN, LOGOUT, EXPORT, COMMAND
+  resource       String       // User, Computer, Policy, Alert, Keylog, Screenshot, etc.
+  resourceId     String?
+  details        String?      // JSON with additional details
+  ipAddress      String?
+  userAgent      String?
+  status         String       @default("SUCCESS") // SUCCESS, FAILURE
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+}
