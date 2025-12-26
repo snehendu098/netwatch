@@ -185,14 +185,14 @@ agentNamespace.on("connection", (socket) => {
   socket.on("clipboard", async (data: {
     computerId: string;
     content: string;
-    type: string;
+    contentType: string;
   }) => {
     try {
       await prisma.clipboardLog.create({
         data: {
           computerId: data.computerId,
           content: data.content,
-          type: data.type,
+          contentType: data.contentType || "TEXT",
         },
       });
 
@@ -250,8 +250,8 @@ agentNamespace.on("connection", (socket) => {
       await prisma.deviceCommand.update({
         where: { id: data.commandId },
         data: {
-          status: data.success ? "COMPLETED" : "FAILED",
-          result: data.output || data.error,
+          status: data.success ? "EXECUTED" : "FAILED",
+          response: data.output || data.error,
           executedAt: new Date(),
         },
       });
@@ -353,28 +353,28 @@ consoleNamespace.on("connection", (socket) => {
   // Send command to agent
   socket.on("send_command", async (data: {
     computerId: string;
-    type: string;
+    command: string;
     payload?: Record<string, unknown>;
   }) => {
     const agent = connectedAgents.get(data.computerId);
     if (agent) {
       try {
-        const command = await prisma.deviceCommand.create({
+        const cmd = await prisma.deviceCommand.create({
           data: {
             computerId: data.computerId,
-            type: data.type,
+            command: data.command,
             payload: JSON.stringify(data.payload || {}),
             status: "PENDING",
           },
         });
 
         agentNamespace.to(agent.socketId).emit("command", {
-          commandId: command.id,
-          type: data.type,
+          commandId: cmd.id,
+          command: data.command,
           payload: data.payload,
         });
 
-        socket.emit("command_sent", { commandId: command.id });
+        socket.emit("command_sent", { commandId: cmd.id });
       } catch (error) {
         console.error("Error sending command:", error);
         socket.emit("command_error", { error: "Failed to send command" });
