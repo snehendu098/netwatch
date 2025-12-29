@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { errorTracker } from "@/lib/error-tracking";
 
 // GET /api/computers - List all computers
 export async function GET(req: NextRequest) {
@@ -51,6 +52,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(computers);
   } catch (error) {
+    errorTracker.captureError(error as Error, { action: "fetchComputers" });
     console.error("Error fetching computers:", error);
     return NextResponse.json(
       { error: "Failed to fetch computers" },
@@ -95,6 +97,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(computer, { status: 201 });
   } catch (error) {
+    errorTracker.captureError(error as Error, { action: "createComputer" });
     console.error("Error creating computer:", error);
     return NextResponse.json(
       { error: "Failed to create computer" },

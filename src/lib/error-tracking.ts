@@ -1,14 +1,11 @@
 /**
- * Error Tracking Utility
+ * Error Tracking Utility with Sentry Integration
  *
- * For production, integrate with Sentry:
- * 1. npm install @sentry/nextjs
- * 2. Run: npx @sentry/wizard@latest -i nextjs
- * 3. Configure your DSN in .env
- *
- * This module provides a simple abstraction that can be replaced
- * with Sentry or any other error tracking service.
+ * This module provides error tracking that integrates with Sentry when configured,
+ * with graceful fallback to console logging when Sentry is not available.
  */
+
+import { captureError, captureMessage, setUserContext, clearUserContext, addBreadcrumb, Sentry } from "./sentry";
 
 interface ErrorContext {
   userId?: string;
@@ -19,6 +16,7 @@ interface ErrorContext {
 
 class ErrorTracker {
   private isProduction = process.env.NODE_ENV === "production";
+  private hasSentry = !!process.env.SENTRY_DSN || !!process.env.NEXT_PUBLIC_SENTRY_DSN;
 
   /**
    * Capture and log an error
@@ -32,19 +30,23 @@ class ErrorTracker {
       ...context,
     };
 
-    // Always log to console
-    console.error("[Error Tracked]", errorData);
-
-    // In production, send to external service
-    if (this.isProduction) {
-      this.sendToService(errorData);
+    // Always log to console in development
+    if (!this.isProduction) {
+      console.error("[Error Tracked]", errorData);
     }
+
+    // Send to Sentry
+    captureError(error, context as Record<string, unknown>);
   }
 
   /**
    * Capture a message/warning
    */
-  captureMessage(message: string, level: "info" | "warning" | "error" = "info", context?: ErrorContext): void {
+  captureMessage(
+    message: string,
+    level: "info" | "warning" | "error" = "info",
+    context?: ErrorContext
+  ): void {
     const data = {
       message,
       level,
@@ -52,19 +54,21 @@ class ErrorTracker {
       ...context,
     };
 
-    console.log(`[${level.toUpperCase()}]`, data);
-
-    if (this.isProduction && level === "error") {
-      this.sendToService(data);
+    if (!this.isProduction) {
+      console.log(`[${level.toUpperCase()}]`, data);
     }
+
+    const sentryLevel = level === "warning" ? "warning" : level === "error" ? "error" : "info";
+    captureMessage(message, sentryLevel, context as Record<string, unknown>);
   }
 
   /**
    * Set user context for error tracking
    */
   setUser(user: { id: string; email?: string; organizationId?: string }): void {
-    // This would set the user in Sentry
-    if (this.isProduction) {
+    setUserContext(user);
+
+    if (!this.isProduction) {
       console.log("[ErrorTracker] User context set:", user.id);
     }
   }
@@ -73,23 +77,28 @@ class ErrorTracker {
    * Clear user context (on logout)
    */
   clearUser(): void {
-    if (this.isProduction) {
+    clearUserContext();
+
+    if (!this.isProduction) {
       console.log("[ErrorTracker] User context cleared");
     }
   }
 
   /**
-   * Send error to external service
-   * Replace with actual Sentry integration
+   * Add a breadcrumb for debugging
    */
-  private async sendToService(data: Record<string, unknown>): Promise<void> {
-    // TODO: Integrate with Sentry
-    // Example:
-    // import * as Sentry from "@sentry/nextjs";
-    // Sentry.captureException(error);
+  addBreadcrumb(category: string, message: string, data?: Record<string, unknown>): void {
+    addBreadcrumb(category, message, data);
+  }
 
-    // For now, we just log
-    console.log("[ErrorTracker] Would send to service:", JSON.stringify(data, null, 2));
+  /**
+   * Start a performance transaction
+   */
+  startTransaction(name: string, op: string) {
+    if (this.hasSentry) {
+      return Sentry.startSpan({ name, op }, () => {});
+    }
+    return null;
   }
 }
 
@@ -104,5 +113,22 @@ export function withErrorTracking<T>(
   return handler().catch((error) => {
     errorTracker.captureError(error as Error, context);
     throw error;
+  });
+}
+
+// Express/API middleware for error tracking
+export function errorTrackingMiddleware(
+  error: Error,
+  context?: ErrorContext
+): void {
+  errorTracker.captureError(error, context);
+}
+
+// React Error Boundary helper
+export function captureReactError(error: Error, errorInfo: { componentStack: string }): void {
+  errorTracker.captureError(error, {
+    metadata: {
+      componentStack: errorInfo.componentStack,
+    },
   });
 }

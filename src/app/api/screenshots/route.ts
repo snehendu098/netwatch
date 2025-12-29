@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { errorTracker } from "@/lib/error-tracking";
 
 // GET /api/screenshots - List screenshots
 export async function GET(req: NextRequest) {
@@ -66,6 +67,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
+    errorTracker.captureError(error as Error, { action: "fetchScreenshots" });
     console.error("Error fetching screenshots:", error);
     return NextResponse.json(
       { error: "Failed to fetch screenshots" },
@@ -124,6 +126,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(screenshot, { status: 201 });
   } catch (error) {
+    errorTracker.captureError(error as Error, { action: "createScreenshot" });
     console.error("Error creating screenshot:", error);
     return NextResponse.json(
       { error: "Failed to create screenshot" },

@@ -1,5 +1,8 @@
 import { Suspense } from "react";
 import prisma from "@/lib/prisma";
+
+// Force dynamic rendering to avoid static generation errors
+export const dynamic = 'force-dynamic';
 import { MonitoringGrid } from "@/components/monitoring/monitoring-grid";
 import { Button } from "@/components/ui/button";
 import {

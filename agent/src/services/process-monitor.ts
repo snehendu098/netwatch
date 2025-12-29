@@ -1,4 +1,3 @@
-import psList from 'ps-list';
 import * as si from 'systeminformation';
 import { AgentService } from './agent-service';
 
@@ -43,29 +42,18 @@ export class ProcessMonitor {
 
   private async collectAndSendProcesses(): Promise<void> {
     try {
-      const [processes, cpuProcesses] = await Promise.all([
-        psList(),
-        si.processes(),
-      ]);
+      // Use systeminformation for process list (avoids ESM issues with ps-list)
+      const cpuProcesses = await si.processes();
 
-      // Create a map of PID to CPU usage
-      const cpuMap = new Map<number, number>();
-      const memMap = new Map<number, number>();
-
-      for (const proc of cpuProcesses.list) {
-        cpuMap.set(proc.pid, proc.cpu || 0);
-        memMap.set(proc.pid, proc.mem || 0);
-      }
-
-      const processInfos: ProcessInfo[] = processes
+      const processInfos: ProcessInfo[] = cpuProcesses.list
         .filter(p => p.name) // Filter out empty process names
         .map(p => ({
           processName: p.name,
           processId: p.pid,
-          path: p.cmd || '',
-          cpuUsage: cpuMap.get(p.pid) || 0,
-          memoryUsage: memMap.get(p.pid) || 0,
-          username: p.name, // ps-list doesn't provide username directly
+          path: p.path || p.command || '',
+          cpuUsage: p.cpu || 0,
+          memoryUsage: p.mem || 0,
+          username: p.user || '',
         }));
 
       // Update cache

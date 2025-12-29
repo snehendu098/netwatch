@@ -376,3 +376,35 @@ export class EmailService {
 
 // Export singleton instance
 export const emailService = EmailService.getInstance();
+
+// Helper function for simple email sending
+export async function sendEmail(options: {
+  to: string | string[];
+  subject: string;
+  html: string;
+  text?: string;
+  attachments?: Array<{ filename: string; content: Buffer | string }>;
+}): Promise<boolean> {
+  // Check if email is configured
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    console.warn("[Email] Not configured. Skipping email send.");
+    return false;
+  }
+
+  try {
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || `"NetWatch Pro" <${process.env.SMTP_USER}>`,
+      to: Array.isArray(options.to) ? options.to.join(", ") : options.to,
+      subject: options.subject,
+      html: options.html,
+      text: options.text || options.html.replace(/<[^>]*>/g, ""),
+      attachments: options.attachments,
+    });
+
+    console.log(`[Email] Sent to ${options.to}: ${options.subject}`);
+    return true;
+  } catch (error) {
+    console.error("[Email] Failed to send:", error);
+    return false;
+  }
+}

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { emailService } from "@/lib/email";
+import { withRateLimit } from "@/lib/rate-limit";
+import { errorTracker } from "@/lib/error-tracking";
 
 // GET /api/alerts - List all alerts
 export async function GET(req: NextRequest) {
@@ -48,6 +51,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(alerts);
   } catch (error) {
+    errorTracker.captureError(error as Error, { action: "fetchAlerts" });
     console.error("Error fetching alerts:", error);
     return NextResponse.json(
       { error: "Failed to fetch alerts" },
@@ -65,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { type, message, computerId } = body;
+    const { type, message, computerId, severity = "MEDIUM" } = body;
 
     if (!type || !message || !computerId) {
       return NextResponse.json(
@@ -104,8 +108,46 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Send email notification for high severity alerts
+    if (severity === "HIGH" || type === "SECURITY") {
+      // Get admin users for the organization to notify
+      const adminUsers = await prisma.user.findMany({
+        where: {
+          organizationId: session.user.organizationId,
+          role: { in: ["ADMIN", "MANAGER"] },
+        },
+        select: { email: true },
+      });
+
+      const adminEmails = adminUsers
+        .map((u) => u.email)
+        .filter((email): email is string => !!email);
+
+      if (adminEmails.length > 0) {
+        // Send notification asynchronously (don't block response)
+        emailService
+          .sendAlertNotification(adminEmails, {
+            alertType: type,
+            computerName: computer.name || computer.hostname || "Unknown",
+            message,
+            severity,
+            timestamp: new Date().toISOString(),
+          })
+          .catch((err) => {
+            errorTracker.captureError(err as Error, {
+              action: "sendAlertEmail",
+              metadata: { alertId: alert.id, type },
+            });
+          });
+      }
+    }
+
     return NextResponse.json(alert, { status: 201 });
   } catch (error) {
+    errorTracker.captureError(error as Error, {
+      userId: undefined,
+      action: "createAlert",
+    });
     console.error("Error creating alert:", error);
     return NextResponse.json(
       { error: "Failed to create alert" },
@@ -142,6 +184,7 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    errorTracker.captureError(error as Error, { action: "updateAlerts" });
     console.error("Error updating alerts:", error);
     return NextResponse.json(
       { error: "Failed to update alerts" },

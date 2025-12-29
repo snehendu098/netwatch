@@ -1,5 +1,10 @@
 import prisma from "@/lib/prisma";
+import { auth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AddComputerDialog } from "@/components/computers/add-computer-dialog";
+
+// Force dynamic rendering to avoid static generation errors
+export const dynamic = 'force-dynamic';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -21,34 +26,42 @@ import { Plus, Search, MoreHorizontal, Monitor, Edit, Trash2, Eye } from "lucide
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 
-async function getComputers() {
+async function getComputers(organizationId: string) {
   return prisma.computer.findMany({
+    where: { organizationId },
     include: { group: true },
     orderBy: { name: "asc" },
   });
 }
 
-async function getGroups() {
+async function getGroups(organizationId: string) {
   return prisma.computerGroup.findMany({
+    where: { organizationId },
     include: { _count: { select: { computers: true } } },
     orderBy: { name: "asc" },
   });
 }
 
-async function getStats() {
+async function getStats(organizationId: string) {
   const [total, online, offline] = await Promise.all([
-    prisma.computer.count(),
-    prisma.computer.count({ where: { status: "ONLINE" } }),
-    prisma.computer.count({ where: { status: "OFFLINE" } }),
+    prisma.computer.count({ where: { organizationId } }),
+    prisma.computer.count({ where: { organizationId, status: "ONLINE" } }),
+    prisma.computer.count({ where: { organizationId, status: "OFFLINE" } }),
   ]);
   return { total, online, offline };
 }
 
 export default async function ComputersPage() {
+  const session = await auth();
+  if (!session?.user?.organizationId) {
+    return <div>Unauthorized</div>;
+  }
+
+  const organizationId = session.user.organizationId;
   const [computers, groups, stats] = await Promise.all([
-    getComputers(),
-    getGroups(),
-    getStats(),
+    getComputers(organizationId),
+    getGroups(organizationId),
+    getStats(organizationId),
   ]);
 
   return (
@@ -60,10 +73,7 @@ export default async function ComputersPage() {
             Manage all monitored computers and their groups
           </p>
         </div>
-        <Button>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Computer
-        </Button>
+        <AddComputerDialog groups={groups} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">

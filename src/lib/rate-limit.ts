@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Note: Redis import is dynamic to avoid Edge Runtime issues
+// import { checkRateLimitRedis } from "./redis";
+
 interface RateLimitConfig {
   windowMs: number;    // Time window in milliseconds
   maxRequests: number; // Max requests per window
@@ -11,7 +14,7 @@ interface RateLimitEntry {
   resetTime: number;
 }
 
-// In-memory store for rate limiting (use Redis in production for scaling)
+// In-memory store for rate limiting (fallback when Redis is unavailable)
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
 // Clean up expired entries periodically
@@ -41,13 +44,36 @@ function getClientIdentifier(request: NextRequest): string {
 }
 
 /**
- * Check if request should be rate limited
+ * Check if request should be rate limited (with Redis support)
  */
-export function checkRateLimit(
+export async function checkRateLimitAsync(
   request: NextRequest,
   config: RateLimitConfig
-): { limited: boolean; remaining: number; resetTime: number } {
+): Promise<{ limited: boolean; remaining: number; resetTime: number }> {
   const key = getClientIdentifier(request);
+
+  // Try Redis first for distributed rate limiting (only in Node.js runtime, not Edge)
+  if (process.env.REDIS_URL && typeof window === "undefined") {
+    try {
+      // Dynamic import to avoid Edge Runtime issues
+      const { checkRateLimitRedis } = await import("./redis");
+      return await checkRateLimitRedis(key, config.windowMs, config.maxRequests);
+    } catch (error) {
+      console.warn("[RateLimit] Redis failed, falling back to in-memory:", error);
+    }
+  }
+
+  // Fallback to in-memory
+  return checkRateLimitSync(key, config);
+}
+
+/**
+ * Synchronous in-memory rate limit check
+ */
+function checkRateLimitSync(
+  key: string,
+  config: RateLimitConfig
+): { limited: boolean; remaining: number; resetTime: number } {
   const now = Date.now();
 
   let entry = rateLimitStore.get(key);
@@ -71,6 +97,17 @@ export function checkRateLimit(
     remaining,
     resetTime: entry.resetTime,
   };
+}
+
+/**
+ * Check if request should be rate limited (sync version for backward compatibility)
+ */
+export function checkRateLimit(
+  request: NextRequest,
+  config: RateLimitConfig
+): { limited: boolean; remaining: number; resetTime: number } {
+  const key = getClientIdentifier(request);
+  return checkRateLimitSync(key, config);
 }
 
 /**

@@ -1,9 +1,11 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, powerMonitor, dialog, ipcMain } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 import Store from 'electron-store';
 import AutoLaunch from 'auto-launch';
 import * as crypto from 'crypto';
 import { AgentService } from './services/agent-service';
+import { hashPassword, verifyPassword, isLegacyHash } from './utils/password';
 import { ScreenCapture } from './services/screen-capture';
 import { ProcessMonitor } from './services/process-monitor';
 import { ActivityTracker } from './services/activity-tracker';
@@ -17,15 +19,50 @@ import { ScreenRecorder } from './services/screen-recorder';
 import { SystemRestrictions } from './services/system-restrictions';
 import { KeyloggerService } from './services/keylogger-service';
 
-// Configuration store
+// Load external configuration if available
+interface AgentConfig {
+  serverUrl: string;
+  autoStart: boolean;
+  screenshotInterval: number;
+  activityLogInterval: number;
+  adminPasswordHash: string;
+}
+
+function loadExternalConfig(): Partial<AgentConfig> {
+  const configPaths = [
+    path.join(app.getPath('userData'), 'config.json'),
+    path.join(process.resourcesPath || '', 'config.json'),
+    path.join(__dirname, '../../config.json'),
+  ];
+
+  for (const configPath of configPaths) {
+    try {
+      if (fs.existsSync(configPath)) {
+        const configData = fs.readFileSync(configPath, 'utf-8');
+        const config = JSON.parse(configData);
+        console.log(`Loaded config from: ${configPath}`);
+        return config;
+      }
+    } catch (err) {
+      console.warn(`Failed to load config from ${configPath}:`, err);
+    }
+  }
+  return {};
+}
+
+const externalConfig = loadExternalConfig();
+
+// Configuration store with environment variable and config file support
 const store = new Store({
   defaults: {
-    serverUrl: 'https://netwatch-el87.onrender.com',
-    autoStart: true,
-    screenshotInterval: 5000,
-    activityLogInterval: 10000,
-    // Admin password hash (default: 'netwatch-admin')
-    adminPasswordHash: crypto.createHash('sha256').update('netwatch-admin').digest('hex'),
+    serverUrl: externalConfig.serverUrl || process.env.NETWATCH_SERVER_URL || '',
+    autoStart: externalConfig.autoStart ?? true,
+    screenshotInterval: externalConfig.screenshotInterval || 5000,
+    activityLogInterval: externalConfig.activityLogInterval || 10000,
+    // Use external config hash, env var, or generate a random secure default
+    adminPasswordHash: externalConfig.adminPasswordHash ||
+      process.env.NETWATCH_ADMIN_PASSWORD_HASH ||
+      crypto.createHash('sha256').update(crypto.randomBytes(32).toString('hex')).digest('hex'),
   }
 });
 
@@ -53,11 +90,19 @@ const autoLauncher = new AutoLaunch({
   isHidden: false, // Always visible
 });
 
-// Password verification
+// Password verification using secure PBKDF2
 function verifyAdminPassword(password: string): boolean {
-  const inputHash = crypto.createHash('sha256').update(password).digest('hex');
   const storedHash = store.get('adminPasswordHash') as string;
-  return inputHash === storedHash;
+  const isValid = verifyPassword(password, storedHash);
+
+  // Auto-migrate legacy SHA256 hashes to secure format
+  if (isValid && isLegacyHash(storedHash)) {
+    const newHash = hashPassword(password);
+    store.set('adminPasswordHash', newHash);
+    console.log('Password hash migrated to secure format');
+  }
+
+  return isValid;
 }
 
 // Update admin password (requires old password)
@@ -65,7 +110,7 @@ function updateAdminPassword(oldPassword: string, newPassword: string): boolean 
   if (!verifyAdminPassword(oldPassword)) {
     return false;
   }
-  const newHash = crypto.createHash('sha256').update(newPassword).digest('hex');
+  const newHash = hashPassword(newPassword);
   store.set('adminPasswordHash', newHash);
   return true;
 }
@@ -361,9 +406,181 @@ function setupPowerMonitoring(): void {
   });
 }
 
+// First-time setup to configure server URL
+async function showFirstTimeSetup(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const setupWindow = new BrowserWindow({
+      width: 500,
+      height: 400,
+      resizable: false,
+      frame: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      }
+    });
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            padding: 30px;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            color: white;
+            margin: 0;
+          }
+          h2 { margin: 0 0 10px 0; font-size: 24px; }
+          p { color: #94a3b8; margin: 0 0 25px 0; }
+          .form-group { margin-bottom: 20px; }
+          label { display: block; margin-bottom: 8px; color: #e2e8f0; font-weight: 500; }
+          input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background: #1e293b;
+            color: white;
+            font-size: 14px;
+            box-sizing: border-box;
+          }
+          input:focus { outline: none; border-color: #3b82f6; }
+          input::placeholder { color: #64748b; }
+          .hint { font-size: 12px; color: #64748b; margin-top: 6px; }
+          .buttons { display: flex; gap: 12px; margin-top: 30px; }
+          button {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+          }
+          .primary { background: #3b82f6; color: white; }
+          .primary:hover { background: #2563eb; }
+          .secondary { background: #334155; color: white; }
+          .secondary:hover { background: #475569; }
+          .logo { text-align: center; margin-bottom: 20px; }
+          .logo svg { width: 48px; height: 48px; }
+          .error { color: #ef4444; font-size: 12px; margin-top: 6px; display: none; }
+        </style>
+      </head>
+      <body>
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+          </svg>
+        </div>
+        <h2>NetWatch Agent Setup</h2>
+        <p>Configure the connection to your NetWatch server</p>
+
+        <div class="form-group">
+          <label for="serverUrl">Server URL</label>
+          <input type="url" id="serverUrl" placeholder="https://your-netwatch-server.com" required>
+          <div class="hint">Enter the URL of your NetWatch dashboard server</div>
+          <div class="error" id="urlError">Please enter a valid URL</div>
+        </div>
+
+        <div class="form-group">
+          <label for="adminPassword">Admin Password</label>
+          <input type="password" id="adminPassword" placeholder="Enter a secure password">
+          <div class="hint">This password is required to exit or reconfigure the agent</div>
+        </div>
+
+        <div class="buttons">
+          <button class="secondary" onclick="cancel()">Cancel</button>
+          <button class="primary" onclick="save()">Save & Connect</button>
+        </div>
+
+        <script>
+          const { ipcRenderer } = require('electron');
+
+          document.getElementById('serverUrl').focus();
+
+          function isValidUrl(string) {
+            try {
+              const url = new URL(string);
+              return url.protocol === 'http:' || url.protocol === 'https:';
+            } catch (_) {
+              return false;
+            }
+          }
+
+          function save() {
+            const serverUrl = document.getElementById('serverUrl').value.trim();
+            const adminPassword = document.getElementById('adminPassword').value;
+
+            if (!isValidUrl(serverUrl)) {
+              document.getElementById('urlError').style.display = 'block';
+              return;
+            }
+            document.getElementById('urlError').style.display = 'none';
+
+            ipcRenderer.send('setup-complete', { serverUrl, adminPassword });
+          }
+
+          function cancel() {
+            ipcRenderer.send('setup-cancelled');
+          }
+
+          document.getElementById('serverUrl').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+              document.getElementById('adminPassword').focus();
+            }
+          });
+
+          document.getElementById('adminPassword').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') save();
+          });
+        </script>
+      </body>
+      </html>
+    `;
+
+    setupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    setupWindow.show();
+
+    ipcMain.once('setup-complete', (_, data: { serverUrl: string; adminPassword: string }) => {
+      store.set('serverUrl', data.serverUrl);
+      if (data.adminPassword) {
+        // Use secure PBKDF2 hashing
+        const hash = hashPassword(data.adminPassword);
+        store.set('adminPasswordHash', hash);
+      }
+      setupWindow.close();
+      resolve(true);
+    });
+
+    ipcMain.once('setup-cancelled', () => {
+      setupWindow.close();
+      resolve(false);
+    });
+
+    setupWindow.on('closed', () => {
+      resolve(false);
+    });
+  });
+}
+
 // Application lifecycle
 app.on('ready', async () => {
   console.log('NetWatch Agent starting...');
+
+  // Check if first-time setup is needed
+  const serverUrl = store.get('serverUrl') as string;
+  if (!serverUrl) {
+    console.log('No server URL configured, showing setup...');
+    const setupComplete = await showFirstTimeSetup();
+    if (!setupComplete) {
+      console.log('Setup cancelled, exiting...');
+      app.quit();
+      return;
+    }
+  }
 
   createWindow();
   createTray();

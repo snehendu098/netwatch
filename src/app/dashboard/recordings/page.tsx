@@ -12,7 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Download, Play, Calendar, Video, Trash2, RefreshCw, Circle } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Search, Download, Play, Calendar, Video, Trash2, RefreshCw, Circle, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface Computer {
@@ -56,6 +62,18 @@ export default function RecordingsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedComputer, setSelectedComputer] = useState<string>("all");
+  const [playerOpen, setPlayerOpen] = useState(false);
+  const [currentRecording, setCurrentRecording] = useState<Recording | null>(null);
+
+  const openPlayer = (recording: Recording) => {
+    setCurrentRecording(recording);
+    setPlayerOpen(true);
+  };
+
+  const closePlayer = () => {
+    setPlayerOpen(false);
+    setCurrentRecording(null);
+  };
 
   useEffect(() => {
     fetchRecordings();
@@ -233,11 +251,13 @@ export default function RecordingsPage() {
                     <div className="flex items-center gap-2">
                       {recording.videoUrl && recording.status === "COMPLETED" && (
                         <>
-                          <Button variant="outline" size="sm" asChild>
-                            <a href={recording.videoUrl} target="_blank" rel="noopener noreferrer">
-                              <Play className="mr-2 h-4 w-4" />
-                              Play
-                            </a>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openPlayer(recording)}
+                          >
+                            <Play className="mr-2 h-4 w-4" />
+                            Play
                           </Button>
                           <Button variant="outline" size="sm" asChild>
                             <a href={recording.videoUrl} download>
@@ -286,6 +306,54 @@ export default function RecordingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Video Player Modal */}
+      <Dialog open={playerOpen} onOpenChange={setPlayerOpen}>
+        <DialogContent className="max-w-4xl p-0">
+          <DialogHeader className="p-4 pb-0">
+            <div className="flex items-center justify-between">
+              <DialogTitle>
+                {currentRecording?.computer.name} -{" "}
+                {currentRecording && new Date(currentRecording.startedAt).toLocaleString()}
+              </DialogTitle>
+              <div className="flex items-center gap-2">
+                {currentRecording?.videoUrl && (
+                  <Button variant="outline" size="sm" asChild>
+                    <a href={currentRecording.videoUrl} download>
+                      <Download className="mr-2 h-4 w-4" />
+                      Download
+                    </a>
+                  </Button>
+                )}
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="p-4 pt-2">
+            {currentRecording?.videoUrl ? (
+              <video
+                src={currentRecording.videoUrl}
+                controls
+                autoPlay
+                className="w-full rounded-lg bg-black"
+                style={{ maxHeight: "70vh" }}
+              >
+                Your browser does not support the video tag.
+              </video>
+            ) : (
+              <div className="flex items-center justify-center h-64 bg-muted rounded-lg">
+                <p className="text-muted-foreground">Video not available</p>
+              </div>
+            )}
+            {currentRecording && (
+              <div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
+                <span>Duration: {formatDuration(currentRecording.duration)}</span>
+                <span>Size: {formatFileSize(currentRecording.fileSize)}</span>
+                <span>Status: {currentRecording.status}</span>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,0 +1,7 @@
+{
+  "serverUrl": "http://localhost:4000",
+  "autoStart": true,
+  "screenshotInterval": 5000,
+  "activityLogInterval": 10000,
+  "adminPasswordHash": ""
+}

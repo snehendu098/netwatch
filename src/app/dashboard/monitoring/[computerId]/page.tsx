@@ -1,5 +1,8 @@
 import prisma from "@/lib/prisma";
 import { notFound } from "next/navigation";
+
+// Force dynamic rendering to avoid static generation errors
+export const dynamic = 'force-dynamic';
 import { SingleComputerView } from "@/components/monitoring/single-computer-view";
 
 interface Props {

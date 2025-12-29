@@ -18,25 +18,42 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users          User[]
-  computers      Computer[]
-  computerGroups ComputerGroup[]
-  blockRules     BlockRule[]
-  settings       Setting[]
-  alerts         Alert[]
-  auditLogs      AuditLog[]
+  users            User[]
+  computers        Computer[]
+  computerGroups   ComputerGroup[]
+  blockRules       BlockRule[]
+  settings         Setting[]
+  alerts           Alert[]
+  auditLogs        AuditLog[]
+  alertRules       AlertRule[]
+  scheduledReports ScheduledReport[]
 }
 
 model User {
-  id             String       @id @default(cuid())
-  email          String       @unique
-  password       String
-  name           String
-  role           String       @default("VIEWER") // ADMIN, MANAGER, VIEWER
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                    String       @id @default(cuid())
+  email                 String       @unique
+  password              String
+  name                  String
+  role                  String       @default("VIEWER") // ADMIN, MANAGER, VIEWER
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Two-Factor Authentication
+  twoFactorEnabled      Boolean      @default(false)
+  twoFactorSecret       String?
+  twoFactorBackupCodes  String?      // JSON array of hashed backup codes
+
+  // Password Reset
+  resetToken            String?      @unique
+  resetTokenExpiry      DateTime?
+
+  // OAuth
+  googleId              String?      @unique
+  githubId              String?      @unique
+  avatarUrl             String?
+
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 
   @@index([organizationId])
 }
@@ -349,4 +366,47 @@ model AuditLog {
   @@index([action])
   @@index([resource])
   @@index([createdAt])
+}
+
+// Alert Rules - configurable alert thresholds
+model AlertRule {
+  id             String       @id @default(cuid())
+  name           String
+  description    String?
+  type           String       // IDLE_TIME, POLICY_VIOLATION, OFFLINE_DURATION, SUSPICIOUS_ACTIVITY, PRODUCTIVITY
+  condition      String       // JSON: { operator: "gt" | "lt" | "eq", value: number, unit?: string }
+  severity       String       @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  actions        String       // JSON: { email: boolean, slack?: boolean, webhook?: string }
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  groupIds       String?      // comma-separated group IDs, null = all groups
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([type])
+}
+
+// Scheduled Reports - automated report generation
+model ScheduledReport {
+  id             String       @id @default(cuid())
+  name           String
+  reportType     String       // ACTIVITY, PRODUCTIVITY, SCREENSHOTS, WEBSITES, APPLICATIONS
+  format         String       @default("PDF") // PDF, CSV, XLSX
+  schedule       String       // DAILY, WEEKLY, MONTHLY
+  scheduleTime   String       @default("09:00") // HH:MM format
+  scheduleDay    Int?         // Day of week (0-6) for weekly, day of month (1-31) for monthly
+  recipients     String       // JSON array of email addresses
+  filters        String?      // JSON: { groupIds?: string[], computerIds?: string[], dateRange?: string }
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lastRunAt      DateTime?
+  nextRunAt      DateTime?
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([nextRunAt])
 }

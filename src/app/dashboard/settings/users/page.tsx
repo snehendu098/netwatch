@@ -1,5 +1,8 @@
 import prisma from "@/lib/prisma";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+// Force dynamic rendering to avoid static generation errors
+export const dynamic = 'force-dynamic';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
