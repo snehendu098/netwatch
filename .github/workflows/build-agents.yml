@@ -40,7 +40,9 @@ jobs:
 
       - name: Package for Windows
         working-directory: agent
-        run: npm run package:win
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4

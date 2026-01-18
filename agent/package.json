@@ -44,18 +44,11 @@
         {
           "target": "nsis",
           "arch": [
-            "x64",
-            "ia32"
-          ]
-        },
-        {
-          "target": "msi",
-          "arch": [
             "x64"
           ]
         }
       ],
-      "icon": "assets/icon.ico",
+      "icon": "assets/icons/512x512.png",
       "requestedExecutionLevel": "requireAdministrator",
       "signAndEditExecutable": false
     },
@@ -63,13 +56,9 @@
       "oneClick": false,
       "perMachine": true,
       "allowToChangeInstallationDirectory": false,
-      "installerIcon": "assets/icon.ico",
-      "uninstallerIcon": "assets/icon.ico",
       "createDesktopShortcut": false,
-      "createStartMenuShortcut": false,
+      "createStartMenuShortcut": true,
       "runAfterFinish": true,
-      "installerSidebar": "assets/installerSidebar.bmp",
-      "license": "LICENSE.txt",
       "deleteAppDataOnUninstall": true
     },
     "mac": {
@@ -146,7 +135,9 @@
     "@types/auto-launch": "^5.0.5",
     "@types/node": "^20.10.0",
     "electron": "^28.1.0",
-    "electron-builder": "^24.9.1",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
+    "node-abi": "^3.71.0",
     "typescript": "^5.3.3"
   }
 }
