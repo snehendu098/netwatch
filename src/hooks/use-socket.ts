@@ -186,9 +186,11 @@ export function useSocket(options: UseSocketOptions = {}) {
     return () => socketRef.current?.off("command_response", callback);
   }, []);
 
+  const getSocket = useCallback(() => socketRef.current, []);
+
   return {
     ...state,
-    socket: socketRef.current,
+    getSocket,
     watchComputer,
     unwatchComputer,
     sendCommand,

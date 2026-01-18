@@ -1,5 +1,6 @@
 import speakeasy from "speakeasy";
 import QRCode from "qrcode";
+import crypto from "crypto";
 
 const APP_NAME = "NetWatch";
 
@@ -73,7 +74,6 @@ export function generateBackupCodes(count: number = 10): string[] {
  * Hash backup codes for storage (using simple hash for demo)
  */
 export function hashBackupCodes(codes: string[]): string[] {
-  const crypto = require("crypto");
   return codes.map((code) =>
     crypto.createHash("sha256").update(code).digest("hex")
   );
@@ -86,7 +86,6 @@ export function verifyBackupCode(
   code: string,
   hashedCodes: string[]
 ): { valid: boolean; remainingCodes: string[] } {
-  const crypto = require("crypto");
   const hashedInput = crypto.createHash("sha256").update(code).digest("hex");
 
   const index = hashedCodes.indexOf(hashedInput);

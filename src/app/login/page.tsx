@@ -135,25 +135,12 @@ export default function LoginPage() {
                 "Sign In"
               )}
             </Button>
-
-            {/* Demo Credentials */}
-            <div className="w-full rounded-lg border bg-muted/50 p-4">
-              <p className="text-sm font-medium text-center mb-3">Demo Credentials</p>
-              <div className="space-y-2 text-xs text-muted-foreground">
-                <div className="flex justify-between items-center p-2 rounded bg-background">
-                  <span className="font-medium">Admin:</span>
-                  <code className="text-foreground">admin@acme.com / password123</code>
-                </div>
-                <div className="flex justify-between items-center p-2 rounded bg-background">
-                  <span className="font-medium">Manager:</span>
-                  <code className="text-foreground">manager@acme.com / password123</code>
-                </div>
-                <div className="flex justify-between items-center p-2 rounded bg-background">
-                  <span className="font-medium">Viewer:</span>
-                  <code className="text-foreground">viewer@acme.com / password123</code>
-                </div>
-              </div>
-            </div>
+            <p className="text-xs text-center text-muted-foreground">
+              Don&apos;t have an account?{" "}
+              <Link href="/register" className="text-primary hover:underline">
+                Contact your administrator
+              </Link>
+            </p>
           </CardFooter>
         </form>
       </Card>

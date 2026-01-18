@@ -159,7 +159,7 @@ export function generateExcel(data: ReportData): Buffer {
     // Data rows
     ...data.rows.map(row =>
       data.columns.map(col => {
-        let value = row[col.key];
+        const value = row[col.key];
         if (value instanceof Date) {
           return value.toISOString();
         }
