@@ -27,6 +27,7 @@ model Organization {
   auditLogs        AuditLog[]
   alertRules       AlertRule[]
   scheduledReports ScheduledReport[]
+  invitations      Invitation[]
 }
 
 model User {
@@ -54,6 +55,8 @@ model User {
 
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
+
+  invitationsSent       Invitation[]
 
   @@index([organizationId])
 }
@@ -409,4 +412,24 @@ model ScheduledReport {
 
   @@index([organizationId])
   @@index([nextRunAt])
+}
+
+// Invitations - user invitation system
+model Invitation {
+  id             String       @id @default(cuid())
+  email          String
+  role           String       @default("VIEWER") // ADMIN, MANAGER, VIEWER
+  token          String       @unique // SHA-256 hashed
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedById    String
+  invitedBy      User         @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+  expiresAt      DateTime     // 7 days from creation
+  status         String       @default("PENDING") // PENDING, ACCEPTED, CANCELLED
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([email, organizationId])
+  @@index([organizationId])
+  @@index([token])
 }

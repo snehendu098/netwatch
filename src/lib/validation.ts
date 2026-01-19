@@ -236,6 +236,18 @@ export const updateSettingSchema = z.object({
   value: z.string().max(10000),
 });
 
+// Invitation schemas
+export const createInvitationSchema = z.object({
+  email: emailSchema,
+  role: z.enum(["ADMIN", "MANAGER", "VIEWER"]).default("VIEWER"),
+});
+
+export const acceptInvitationSchema = z.object({
+  token: z.string().length(64),
+  password: passwordSchema,
+  name: z.string().min(1, "Name is required").max(100),
+});
+
 export const settingsSchema = z.record(z.string(), z.string());
 
 // Validation helper
@@ -284,3 +296,5 @@ export type CreateCommandInput = z.infer<typeof createCommandSchema>;
 export type CreateFileTransferInput = z.infer<typeof createFileTransferSchema>;
 export type CreateRemoteSessionInput = z.infer<typeof createRemoteSessionSchema>;
 export type ExportReportInput = z.infer<typeof exportReportSchema>;
+export type CreateInvitationInput = z.infer<typeof createInvitationSchema>;
+export type AcceptInvitationInput = z.infer<typeof acceptInvitationSchema>;

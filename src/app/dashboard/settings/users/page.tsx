@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { auth } from "@/lib/auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 // Force dynamic rendering to avoid static generation errors
@@ -21,17 +22,39 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Plus, Search, MoreHorizontal, Edit, Trash2, Mail } from "lucide-react";
+import { Search, MoreHorizontal, Edit, Trash2, Mail } from "lucide-react";
 import { format } from "date-fns";
+import { PendingInvitations } from "./pending-invitations";
+import { InviteUserButton } from "./invite-user-button";
 
-async function getUsers() {
+async function getUsers(organizationId: string) {
   return prisma.user.findMany({
+    where: { organizationId },
     orderBy: { createdAt: "desc" },
   });
 }
 
+async function getPendingInvitationsCount(organizationId: string) {
+  return prisma.invitation.count({
+    where: {
+      organizationId,
+      status: "PENDING",
+    },
+  });
+}
+
 export default async function UsersSettingsPage() {
-  const users = await getUsers();
+  const session = await auth();
+  if (!session?.user) {
+    return <div>Unauthorized</div>;
+  }
+
+  const [users, pendingCount] = await Promise.all([
+    getUsers(session.user.organizationId),
+    getPendingInvitationsCount(session.user.organizationId),
+  ]);
+
+  const isAdmin = session.user.role === "ADMIN";
 
   const getRoleBadge = (role: string) => {
     switch (role) {
@@ -62,10 +85,7 @@ export default async function UsersSettingsPage() {
             Manage users and their access levels
           </p>
         </div>
-        <Button>
-          <Plus className="mr-2 h-4 w-4" />
-          Invite User
-        </Button>
+        {isAdmin && <InviteUserButton />}
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -98,10 +118,12 @@ export default async function UsersSettingsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">0</p>
+            <p className="text-2xl font-bold">{pendingCount}</p>
           </CardContent>
         </Card>
       </div>
+
+      {isAdmin && <PendingInvitations />}
 
       <Card>
         <CardHeader>

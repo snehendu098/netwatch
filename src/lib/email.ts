@@ -183,6 +183,78 @@ View Full Report: ${process.env.NEXTAUTH_URL || "http://localhost:3000"}/dashboa
     `,
   }),
 
+  invitation: (data: {
+    inviterName: string;
+    organizationName: string;
+    role: string;
+    inviteLink: string;
+    expiresAt: string;
+  }) => ({
+    subject: `You've been invited to join ${data.organizationName} on NetWatch`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #1e293b 0%, #3b82f6 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center; }
+          .header h1 { margin: 0; font-size: 24px; }
+          .content { background: #f8fafc; padding: 30px; border: 1px solid #e2e8f0; }
+          .invite-box { background: white; border-radius: 8px; padding: 24px; margin: 20px 0; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+          .role-badge { display: inline-block; padding: 6px 16px; border-radius: 20px; font-size: 14px; font-weight: bold; color: white; background: ${
+            data.role === "ADMIN" ? "#9333ea" : data.role === "MANAGER" ? "#3b82f6" : "#6b7280"
+          }; }
+          .footer { background: #1e293b; color: #94a3b8; padding: 20px; border-radius: 0 0 8px 8px; font-size: 12px; text-align: center; }
+          .btn { display: inline-block; background: #3b82f6; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; margin: 20px 0; font-weight: 600; }
+          .btn:hover { background: #2563eb; }
+          .expires { font-size: 13px; color: #64748b; margin-top: 16px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>You're Invited!</h1>
+          </div>
+          <div class="content">
+            <p>Hi there,</p>
+            <p><strong>${data.inviterName}</strong> has invited you to join <strong>${data.organizationName}</strong> on NetWatch.</p>
+
+            <div class="invite-box">
+              <p style="margin: 0 0 12px 0; color: #64748b;">You've been assigned the role:</p>
+              <span class="role-badge">${data.role}</span>
+
+              <p style="margin: 24px 0 0 0;">
+                <a href="${data.inviteLink}" class="btn">Accept Invitation</a>
+              </p>
+
+              <p class="expires">This invitation expires on ${data.expiresAt}</p>
+            </div>
+
+            <p style="font-size: 14px; color: #64748b;">If you didn't expect this invitation, you can safely ignore this email.</p>
+          </div>
+          <div class="footer">
+            <p>NetWatch - Employee Monitoring Platform</p>
+            <p style="margin: 8px 0 0 0; font-size: 11px;">If you're having trouble clicking the button, copy and paste this URL into your browser:<br>${data.inviteLink}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    text: `
+You've been invited to join ${data.organizationName} on NetWatch
+
+${data.inviterName} has invited you to join ${data.organizationName} on NetWatch with the role: ${data.role}
+
+Accept your invitation by clicking the link below:
+${data.inviteLink}
+
+This invitation expires on ${data.expiresAt}.
+
+If you didn't expect this invitation, you can safely ignore this email.
+    `,
+  }),
+
   weeklyDigest: (data: {
     organizationName: string;
     weekRange: string;
@@ -356,6 +428,20 @@ export class EmailService {
     }
   ): Promise<boolean> {
     const template = templates.weeklyDigest(data);
+    return this.sendEmail(to, template.subject, template.html, template.text);
+  }
+
+  async sendInvitation(
+    to: string,
+    data: {
+      inviterName: string;
+      organizationName: string;
+      role: string;
+      inviteLink: string;
+      expiresAt: string;
+    }
+  ): Promise<boolean> {
+    const template = templates.invitation(data);
     return this.sendEmail(to, template.subject, template.html, template.text);
   }
 
