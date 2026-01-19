@@ -6,6 +6,7 @@ import AutoLaunch from 'auto-launch';
 import * as crypto from 'crypto';
 import { AgentService } from './services/agent-service';
 import { hashPassword, verifyPassword, isLegacyHash } from './utils/password';
+import { ScheduleConfig, DEFAULT_SCHEDULE, isMonitoringActive, getScheduleDescription, validateSchedule } from './utils/schedule';
 import { ScreenCapture } from './services/screen-capture';
 import { ProcessMonitor } from './services/process-monitor';
 import { ActivityTracker } from './services/activity-tracker';
@@ -26,6 +27,7 @@ interface AgentConfig {
   screenshotInterval: number;
   activityLogInterval: number;
   adminPasswordHash: string;
+  schedule: ScheduleConfig;
 }
 
 function loadExternalConfig(): Partial<AgentConfig> {
@@ -63,8 +65,14 @@ const store = new Store({
     adminPasswordHash: externalConfig.adminPasswordHash ||
       process.env.NETWATCH_ADMIN_PASSWORD_HASH ||
       crypto.createHash('sha256').update(crypto.randomBytes(32).toString('hex')).digest('hex'),
+    // Schedule configuration
+    schedule: externalConfig.schedule || DEFAULT_SCHEDULE,
   }
 });
+
+// Track monitoring state
+let isMonitoringEnabled = false;  // Will be set by schedule checking
+let scheduleCheckInterval: NodeJS.Timeout | null = null;
 
 // Global references
 let mainWindow: BrowserWindow | null = null;
@@ -172,15 +180,33 @@ function createTray(): void {
 function updateTrayMenu(status: string): void {
   if (!tray) return;
 
+  const schedule = store.get('schedule') as ScheduleConfig;
+  const scheduleDesc = getScheduleDescription(schedule);
+
   const contextMenu = Menu.buildFromTemplate([
     {
       label: `Status: ${status}`,
+      enabled: false,
+    },
+    {
+      label: `Schedule: ${schedule.enabled ? 'Custom' : '24/7'}`,
       enabled: false,
     },
     { type: 'separator' },
     {
       label: 'Show Status Window',
       click: () => mainWindow?.show(),
+    },
+    {
+      label: 'View Schedule',
+      click: () => {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Monitoring Schedule',
+          message: 'Current Schedule',
+          detail: scheduleDesc,
+        });
+      },
     },
     {
       label: 'About NetWatch',
@@ -195,6 +221,12 @@ function updateTrayMenu(status: string): void {
     },
     { type: 'separator' },
     {
+      label: 'Configure Schedule (Admin)',
+      click: async () => {
+        await promptForScheduleConfig();
+      },
+    },
+    {
       label: 'Exit (Admin Only)',
       click: async () => {
         await promptForAdminPassword();
@@ -203,6 +235,7 @@ function updateTrayMenu(status: string): void {
   ]);
 
   tray.setContextMenu(contextMenu);
+  tray.setToolTip(`NetWatch Agent - ${status}`);
 }
 
 async function promptForAdminPassword(): Promise<void> {
@@ -315,6 +348,265 @@ async function promptForAdminPassword(): Promise<void> {
   });
 }
 
+// Prompt for schedule configuration (admin-protected)
+async function promptForScheduleConfig(): Promise<void> {
+  // First verify admin password
+  const passwordVerified = await new Promise<boolean>((resolve) => {
+    const passwordWindow = new BrowserWindow({
+      width: 350,
+      height: 180,
+      parent: mainWindow || undefined,
+      modal: true,
+      show: false,
+      frame: true,
+      resizable: false,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      }
+    });
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; background: #f5f5f5; }
+          h3 { margin: 0 0 15px 0; color: #333; }
+          input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+          .buttons { display: flex; gap: 10px; margin-top: 15px; }
+          button { flex: 1; padding: 10px; border: none; border-radius: 4px; cursor: pointer; }
+          .primary { background: #007bff; color: white; }
+          .secondary { background: #6c757d; color: white; }
+          .error { color: red; font-size: 12px; display: none; }
+        </style>
+      </head>
+      <body>
+        <h3>Admin Password Required</h3>
+        <input type="password" id="password" placeholder="Enter admin password" autofocus>
+        <div class="error" id="error">Incorrect password</div>
+        <div class="buttons">
+          <button class="secondary" onclick="cancel()">Cancel</button>
+          <button class="primary" onclick="verify()">Verify</button>
+        </div>
+        <script>
+          const { ipcRenderer } = require('electron');
+          document.getElementById('password').addEventListener('keypress', (e) => { if (e.key === 'Enter') verify(); });
+          function verify() { ipcRenderer.send('verify-schedule-password', document.getElementById('password').value); }
+          function cancel() { ipcRenderer.send('cancel-schedule-password'); }
+          ipcRenderer.on('password-invalid-schedule', () => {
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('password').value = '';
+          });
+        </script>
+      </body>
+      </html>
+    `;
+
+    passwordWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    passwordWindow.once('ready-to-show', () => passwordWindow.show());
+
+    const cleanup = () => {
+      ipcMain.removeAllListeners('verify-schedule-password');
+      ipcMain.removeAllListeners('cancel-schedule-password');
+    };
+
+    ipcMain.once('verify-schedule-password', (_, password: string) => {
+      if (verifyAdminPassword(password)) {
+        cleanup();
+        passwordWindow.close();
+        resolve(true);
+      } else {
+        passwordWindow.webContents.send('password-invalid-schedule');
+        ipcMain.once('verify-schedule-password', (__, retryPassword: string) => {
+          cleanup();
+          passwordWindow.close();
+          resolve(verifyAdminPassword(retryPassword));
+        });
+      }
+    });
+
+    ipcMain.once('cancel-schedule-password', () => {
+      cleanup();
+      passwordWindow.close();
+      resolve(false);
+    });
+
+    passwordWindow.on('closed', () => {
+      cleanup();
+      resolve(false);
+    });
+  });
+
+  if (!passwordVerified) return;
+
+  // Show schedule configuration dialog
+  const currentSchedule = store.get('schedule') as ScheduleConfig;
+
+  const scheduleWindow = new BrowserWindow({
+    width: 500,
+    height: 450,
+    parent: mainWindow || undefined,
+    modal: true,
+    show: false,
+    frame: true,
+    resizable: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    }
+  });
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 25px; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; margin: 0; }
+        h3 { margin: 0 0 20px 0; font-size: 18px; }
+        label { display: block; margin-bottom: 8px; color: #e2e8f0; font-weight: 500; font-size: 14px; }
+        .hint { font-size: 12px; color: #64748b; margin-top: 8px; }
+        .buttons { display: flex; gap: 12px; margin-top: 25px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
+        .primary { background: #3b82f6; color: white; }
+        .primary:hover { background: #2563eb; }
+        .secondary { background: #334155; color: white; }
+        .secondary:hover { background: #475569; }
+        .schedule-toggle { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+        .toggle-switch { position: relative; width: 48px; height: 26px; background: #334155; border-radius: 13px; cursor: pointer; transition: background 0.3s; }
+        .toggle-switch.active { background: #3b82f6; }
+        .toggle-switch::after { content: ''; position: absolute; width: 22px; height: 22px; background: white; border-radius: 50%; top: 2px; left: 2px; transition: left 0.3s; }
+        .toggle-switch.active::after { left: 24px; }
+        .toggle-label { font-size: 14px; color: #e2e8f0; }
+        .schedule-options { display: none; }
+        .schedule-options.visible { display: block; }
+        .days-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 15px; }
+        .day-btn { padding: 8px 12px; border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #94a3b8; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+        .day-btn.selected { background: #3b82f6; border-color: #3b82f6; color: white; }
+        .day-btn:hover { border-color: #3b82f6; }
+        .time-row { display: flex; gap: 15px; align-items: center; }
+        .time-row .form-group { flex: 1; margin-bottom: 0; }
+        input[type="time"] { width: 100%; padding: 10px; border: 1px solid #334155; border-radius: 8px; background: #1e293b; color: white; font-size: 14px; box-sizing: border-box; }
+        input[type="time"]:focus { outline: none; border-color: #3b82f6; }
+        .form-group { margin-bottom: 15px; }
+      </style>
+    </head>
+    <body>
+      <h3>Configure Monitoring Schedule</h3>
+
+      <div class="schedule-toggle">
+        <div class="toggle-switch ${currentSchedule.enabled ? 'active' : ''}" id="scheduleToggle" onclick="toggleSchedule()"></div>
+        <span class="toggle-label" id="scheduleLabel">${currentSchedule.enabled ? 'Custom Schedule' : 'Always Active (24/7)'}</span>
+      </div>
+
+      <div class="schedule-options ${currentSchedule.enabled ? 'visible' : ''}" id="scheduleOptions">
+        <label>Active Days</label>
+        <div class="days-grid">
+          <button type="button" class="day-btn ${currentSchedule.days.includes(0) ? 'selected' : ''}" data-day="0">Sun</button>
+          <button type="button" class="day-btn ${currentSchedule.days.includes(1) ? 'selected' : ''}" data-day="1">Mon</button>
+          <button type="button" class="day-btn ${currentSchedule.days.includes(2) ? 'selected' : ''}" data-day="2">Tue</button>
+          <button type="button" class="day-btn ${currentSchedule.days.includes(3) ? 'selected' : ''}" data-day="3">Wed</button>
+          <button type="button" class="day-btn ${currentSchedule.days.includes(4) ? 'selected' : ''}" data-day="4">Thu</button>
+          <button type="button" class="day-btn ${currentSchedule.days.includes(5) ? 'selected' : ''}" data-day="5">Fri</button>
+          <button type="button" class="day-btn ${currentSchedule.days.includes(6) ? 'selected' : ''}" data-day="6">Sat</button>
+        </div>
+
+        <div class="time-row">
+          <div class="form-group">
+            <label for="startTime">Start Time</label>
+            <input type="time" id="startTime" value="${currentSchedule.startTime}">
+          </div>
+          <div class="form-group">
+            <label for="endTime">End Time</label>
+            <input type="time" id="endTime" value="${currentSchedule.endTime}">
+          </div>
+        </div>
+        <div class="hint">Monitoring will only be active during these hours on selected days</div>
+      </div>
+
+      <div class="buttons">
+        <button class="secondary" onclick="cancel()">Cancel</button>
+        <button class="primary" onclick="save()">Save Schedule</button>
+      </div>
+
+      <script>
+        const { ipcRenderer } = require('electron');
+        let scheduleEnabled = ${currentSchedule.enabled};
+        let selectedDays = ${JSON.stringify(currentSchedule.days)};
+
+        document.querySelectorAll('.day-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const day = parseInt(btn.dataset.day);
+            btn.classList.toggle('selected');
+            if (btn.classList.contains('selected')) {
+              if (!selectedDays.includes(day)) selectedDays.push(day);
+            } else {
+              selectedDays = selectedDays.filter(d => d !== day);
+            }
+            selectedDays.sort((a, b) => a - b);
+          });
+        });
+
+        function toggleSchedule() {
+          scheduleEnabled = !scheduleEnabled;
+          const toggle = document.getElementById('scheduleToggle');
+          const label = document.getElementById('scheduleLabel');
+          const options = document.getElementById('scheduleOptions');
+          if (scheduleEnabled) {
+            toggle.classList.add('active');
+            label.textContent = 'Custom Schedule';
+            options.classList.add('visible');
+          } else {
+            toggle.classList.remove('active');
+            label.textContent = 'Always Active (24/7)';
+            options.classList.remove('visible');
+          }
+        }
+
+        function save() {
+          const schedule = {
+            enabled: scheduleEnabled,
+            days: selectedDays,
+            startTime: document.getElementById('startTime').value,
+            endTime: document.getElementById('endTime').value
+          };
+          ipcRenderer.send('save-schedule-config', schedule);
+        }
+
+        function cancel() {
+          ipcRenderer.send('cancel-schedule-config');
+        }
+      </script>
+    </body>
+    </html>
+  `;
+
+  scheduleWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  scheduleWindow.once('ready-to-show', () => scheduleWindow.show());
+
+  ipcMain.once('save-schedule-config', (_, newSchedule: ScheduleConfig) => {
+    store.set('schedule', validateSchedule(newSchedule));
+    scheduleWindow.close();
+    // Restart schedule checking with new config
+    setupScheduleChecking();
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Schedule Updated',
+      message: 'Monitoring schedule has been updated.',
+      detail: getScheduleDescription(store.get('schedule') as ScheduleConfig),
+    });
+  });
+
+  ipcMain.once('cancel-schedule-config', () => {
+    scheduleWindow.close();
+  });
+
+  scheduleWindow.on('closed', () => {
+    ipcMain.removeAllListeners('save-schedule-config');
+    ipcMain.removeAllListeners('cancel-schedule-config');
+  });
+}
+
 async function initializeServices(): Promise<void> {
   const serverUrl = store.get('serverUrl') as string;
 
@@ -322,7 +614,7 @@ async function initializeServices(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   agentService = new AgentService(serverUrl, store as any);
 
-  // Initialize monitoring services
+  // Initialize monitoring services (but don't start them yet)
   screenCapture = new ScreenCapture(agentService);
   processMonitor = new ProcessMonitor(agentService);
   activityTracker = new ActivityTracker(agentService);
@@ -340,29 +632,28 @@ async function initializeServices(): Promise<void> {
 
   // Set up connection status callback
   agentService.onConnectionChange((connected) => {
-    updateTrayMenu(connected ? 'Connected' : 'Disconnected');
+    // Only show "Connected" if monitoring is active
+    if (isMonitoringEnabled) {
+      updateTrayMenu(connected ? 'Connected' : 'Disconnected');
+    } else {
+      updateTrayMenu('Paused (Scheduled)');
+    }
   });
 
-  // Connect to server
+  // Connect to server (always maintain connection for commands)
   await agentService.connect();
 
-  // Start monitoring services
-  screenCapture.start();
-  processMonitor.start();
-  activityTracker.start();
-  clipboardMonitor.start();
-  keyloggerService.start();
-  blockingService.start();
-
-  // Register command handlers
+  // Register command handlers (always available)
   commandExecutor.registerHandlers();
   remoteControl.registerHandlers();
   terminalService.registerHandlers();
   fileTransfer.registerHandlers();
   systemRestrictions.registerHandlers();
 
-  updateTrayMenu('Connected');
-  console.log('All services initialized and running');
+  // Setup schedule checking - this will start/stop monitoring as needed
+  setupScheduleChecking();
+
+  console.log('All services initialized');
 }
 
 async function setupAutoStart(): Promise<void> {
@@ -393,6 +684,8 @@ function setupPowerMonitoring(): void {
   powerMonitor.on('resume', () => {
     console.log('System resumed');
     agentService?.reconnect();
+    // Check schedule on resume
+    checkScheduleAndUpdateMonitoring();
   });
 
   powerMonitor.on('lock-screen', () => {
@@ -406,12 +699,94 @@ function setupPowerMonitoring(): void {
   });
 }
 
-// First-time setup to configure server URL
+// Start monitoring services
+function startMonitoringServices(): void {
+  if (isMonitoringEnabled) {
+    console.log('Monitoring already active');
+    return;
+  }
+
+  console.log('Starting monitoring services...');
+  screenCapture?.start();
+  processMonitor?.start();
+  activityTracker?.start();
+  clipboardMonitor?.start();
+  keyloggerService?.start();
+  blockingService?.start();
+
+  isMonitoringEnabled = true;
+  updateTrayMenu(agentService?.isConnected() ? 'Connected' : 'Disconnected');
+  console.log('Monitoring services started');
+}
+
+// Stop monitoring services
+function stopMonitoringServices(): void {
+  if (!isMonitoringEnabled) {
+    console.log('Monitoring already inactive');
+    return;
+  }
+
+  console.log('Stopping monitoring services...');
+  screenCapture?.stop();
+  processMonitor?.stop();
+  activityTracker?.stop();
+  clipboardMonitor?.stop();
+  keyloggerService?.stop();
+  // Keep blocking service running to maintain blocks
+  // blockingService?.stop();
+
+  isMonitoringEnabled = false;
+  updateTrayMenu('Paused (Scheduled)');
+  console.log('Monitoring services stopped');
+}
+
+// Check schedule and update monitoring state
+function checkScheduleAndUpdateMonitoring(): void {
+  const schedule = store.get('schedule') as ScheduleConfig;
+  const shouldBeActive = isMonitoringActive(schedule);
+
+  if (shouldBeActive && !isMonitoringEnabled) {
+    console.log('Schedule: Monitoring period started');
+    startMonitoringServices();
+  } else if (!shouldBeActive && isMonitoringEnabled) {
+    console.log('Schedule: Monitoring period ended');
+    stopMonitoringServices();
+  }
+}
+
+// Setup schedule checking interval
+function setupScheduleChecking(): void {
+  const schedule = store.get('schedule') as ScheduleConfig;
+
+  // Clear existing interval if any
+  if (scheduleCheckInterval) {
+    clearInterval(scheduleCheckInterval);
+    scheduleCheckInterval = null;
+  }
+
+  // If scheduling is disabled, ensure monitoring is active
+  if (!schedule.enabled) {
+    console.log('Schedule: Always active (24/7)');
+    if (!isMonitoringEnabled) {
+      startMonitoringServices();
+    }
+    return;
+  }
+
+  // Check every minute for schedule changes
+  console.log('Schedule: ' + getScheduleDescription(schedule));
+  scheduleCheckInterval = setInterval(checkScheduleAndUpdateMonitoring, 60000);
+
+  // Do initial check
+  checkScheduleAndUpdateMonitoring();
+}
+
+// First-time setup to configure server URL and schedule
 async function showFirstTimeSetup(): Promise<boolean> {
   return new Promise((resolve) => {
     const setupWindow = new BrowserWindow({
-      width: 500,
-      height: 400,
+      width: 550,
+      height: 700,
       resizable: false,
       frame: true,
       webPreferences: {
@@ -431,12 +806,14 @@ async function showFirstTimeSetup(): Promise<boolean> {
             background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
             color: white;
             margin: 0;
+            overflow-y: auto;
           }
           h2 { margin: 0 0 10px 0; font-size: 24px; }
-          p { color: #94a3b8; margin: 0 0 25px 0; }
-          .form-group { margin-bottom: 20px; }
+          h3 { margin: 20px 0 10px 0; font-size: 16px; color: #e2e8f0; }
+          p { color: #94a3b8; margin: 0 0 20px 0; }
+          .form-group { margin-bottom: 16px; }
           label { display: block; margin-bottom: 8px; color: #e2e8f0; font-weight: 500; }
-          input {
+          input[type="url"], input[type="password"], input[type="time"] {
             width: 100%;
             padding: 12px;
             border: 1px solid #334155;
@@ -449,7 +826,7 @@ async function showFirstTimeSetup(): Promise<boolean> {
           input:focus { outline: none; border-color: #3b82f6; }
           input::placeholder { color: #64748b; }
           .hint { font-size: 12px; color: #64748b; margin-top: 6px; }
-          .buttons { display: flex; gap: 12px; margin-top: 30px; }
+          .buttons { display: flex; gap: 12px; margin-top: 25px; }
           button {
             flex: 1;
             padding: 12px 20px;
@@ -463,9 +840,86 @@ async function showFirstTimeSetup(): Promise<boolean> {
           .primary:hover { background: #2563eb; }
           .secondary { background: #334155; color: white; }
           .secondary:hover { background: #475569; }
-          .logo { text-align: center; margin-bottom: 20px; }
-          .logo svg { width: 48px; height: 48px; }
+          .logo { text-align: center; margin-bottom: 15px; }
+          .logo svg { width: 40px; height: 40px; }
           .error { color: #ef4444; font-size: 12px; margin-top: 6px; display: none; }
+
+          /* Schedule styles */
+          .schedule-section { margin-top: 20px; padding-top: 20px; border-top: 1px solid #334155; }
+          .schedule-toggle { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; }
+          .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            background: #334155;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.3s;
+          }
+          .toggle-switch.active { background: #3b82f6; }
+          .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: left 0.3s;
+          }
+          .toggle-switch.active::after { left: 24px; }
+          .toggle-label { font-size: 14px; color: #e2e8f0; }
+
+          .schedule-options { display: none; }
+          .schedule-options.visible { display: block; }
+
+          .days-grid {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+          }
+          .day-btn {
+            padding: 8px 12px;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            background: #1e293b;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+          }
+          .day-btn.selected {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+          }
+          .day-btn:hover { border-color: #3b82f6; }
+
+          .time-row {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+          }
+          .time-row .form-group { flex: 1; margin-bottom: 0; }
+          .time-row input[type="time"] { padding: 10px; }
+
+          .preset-btns {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+          }
+          .preset-btn {
+            padding: 6px 12px;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            background: transparent;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 12px;
+          }
+          .preset-btn:hover { border-color: #3b82f6; color: #3b82f6; }
         </style>
       </head>
       <body>
@@ -491,6 +945,45 @@ async function showFirstTimeSetup(): Promise<boolean> {
           <div class="hint">This password is required to exit or reconfigure the agent</div>
         </div>
 
+        <div class="schedule-section">
+          <h3>Monitoring Schedule</h3>
+          <div class="schedule-toggle">
+            <div class="toggle-switch" id="scheduleToggle" onclick="toggleSchedule()"></div>
+            <span class="toggle-label" id="scheduleLabel">Always Active (24/7)</span>
+          </div>
+
+          <div class="schedule-options" id="scheduleOptions">
+            <div class="preset-btns">
+              <button type="button" class="preset-btn" onclick="setPreset('weekdays')">Weekdays Only</button>
+              <button type="button" class="preset-btn" onclick="setPreset('alldays')">All Days</button>
+              <button type="button" class="preset-btn" onclick="setPreset('business')">Business Hours</button>
+            </div>
+
+            <label>Active Days</label>
+            <div class="days-grid">
+              <button type="button" class="day-btn" data-day="0">Sun</button>
+              <button type="button" class="day-btn selected" data-day="1">Mon</button>
+              <button type="button" class="day-btn selected" data-day="2">Tue</button>
+              <button type="button" class="day-btn selected" data-day="3">Wed</button>
+              <button type="button" class="day-btn selected" data-day="4">Thu</button>
+              <button type="button" class="day-btn selected" data-day="5">Fri</button>
+              <button type="button" class="day-btn" data-day="6">Sat</button>
+            </div>
+
+            <div class="time-row">
+              <div class="form-group">
+                <label for="startTime">Start Time</label>
+                <input type="time" id="startTime" value="09:00">
+              </div>
+              <div class="form-group">
+                <label for="endTime">End Time</label>
+                <input type="time" id="endTime" value="18:00">
+              </div>
+            </div>
+            <div class="hint">Monitoring will only be active during these hours on selected days</div>
+          </div>
+        </div>
+
         <div class="buttons">
           <button class="secondary" onclick="cancel()">Cancel</button>
           <button class="primary" onclick="save()">Save & Connect</button>
@@ -499,7 +992,64 @@ async function showFirstTimeSetup(): Promise<boolean> {
         <script>
           const { ipcRenderer } = require('electron');
 
+          let scheduleEnabled = false;
+          let selectedDays = [1, 2, 3, 4, 5]; // Mon-Fri default
+
           document.getElementById('serverUrl').focus();
+
+          // Day button click handlers
+          document.querySelectorAll('.day-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const day = parseInt(btn.dataset.day);
+              btn.classList.toggle('selected');
+              if (btn.classList.contains('selected')) {
+                if (!selectedDays.includes(day)) selectedDays.push(day);
+              } else {
+                selectedDays = selectedDays.filter(d => d !== day);
+              }
+              selectedDays.sort((a, b) => a - b);
+            });
+          });
+
+          function toggleSchedule() {
+            scheduleEnabled = !scheduleEnabled;
+            const toggle = document.getElementById('scheduleToggle');
+            const label = document.getElementById('scheduleLabel');
+            const options = document.getElementById('scheduleOptions');
+
+            if (scheduleEnabled) {
+              toggle.classList.add('active');
+              label.textContent = 'Custom Schedule';
+              options.classList.add('visible');
+            } else {
+              toggle.classList.remove('active');
+              label.textContent = 'Always Active (24/7)';
+              options.classList.remove('visible');
+            }
+          }
+
+          function setPreset(preset) {
+            const dayBtns = document.querySelectorAll('.day-btn');
+            dayBtns.forEach(btn => btn.classList.remove('selected'));
+
+            if (preset === 'weekdays') {
+              selectedDays = [1, 2, 3, 4, 5];
+              document.getElementById('startTime').value = '09:00';
+              document.getElementById('endTime').value = '18:00';
+            } else if (preset === 'alldays') {
+              selectedDays = [0, 1, 2, 3, 4, 5, 6];
+              document.getElementById('startTime').value = '00:00';
+              document.getElementById('endTime').value = '23:59';
+            } else if (preset === 'business') {
+              selectedDays = [1, 2, 3, 4, 5];
+              document.getElementById('startTime').value = '08:00';
+              document.getElementById('endTime').value = '17:00';
+            }
+
+            selectedDays.forEach(day => {
+              document.querySelector('.day-btn[data-day="' + day + '"]').classList.add('selected');
+            });
+          }
 
           function isValidUrl(string) {
             try {
@@ -520,7 +1070,14 @@ async function showFirstTimeSetup(): Promise<boolean> {
             }
             document.getElementById('urlError').style.display = 'none';
 
-            ipcRenderer.send('setup-complete', { serverUrl, adminPassword });
+            const schedule = {
+              enabled: scheduleEnabled,
+              days: selectedDays,
+              startTime: document.getElementById('startTime').value,
+              endTime: document.getElementById('endTime').value
+            };
+
+            ipcRenderer.send('setup-complete', { serverUrl, adminPassword, schedule });
           }
 
           function cancel() {
@@ -544,13 +1101,15 @@ async function showFirstTimeSetup(): Promise<boolean> {
     setupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     setupWindow.show();
 
-    ipcMain.once('setup-complete', (_, data: { serverUrl: string; adminPassword: string }) => {
+    ipcMain.once('setup-complete', (_, data: { serverUrl: string; adminPassword: string; schedule: ScheduleConfig }) => {
       store.set('serverUrl', data.serverUrl);
       if (data.adminPassword) {
         // Use secure PBKDF2 hashing
         const hash = hashPassword(data.adminPassword);
         store.set('adminPasswordHash', hash);
       }
+      // Save schedule configuration
+      store.set('schedule', validateSchedule(data.schedule));
       setupWindow.close();
       resolve(true);
     });
@@ -608,6 +1167,12 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
+
+  // Clear schedule check interval
+  if (scheduleCheckInterval) {
+    clearInterval(scheduleCheckInterval);
+    scheduleCheckInterval = null;
+  }
 
   // Cleanup services
   screenCapture?.stop();
