@@ -58,7 +58,24 @@ export class AgentService extends EventEmitter {
     return new Promise((resolve, reject) => {
       console.log(`Connecting to server: ${this.serverUrl}`);
 
-      this.socket = io(`${this.serverUrl}/agent`, {
+      // Parse URL to handle path prefixes (e.g., https://domain.com/nw-socket)
+      let socketUrl = this.serverUrl;
+      let socketPath = '/socket.io';
+
+      try {
+        const url = new URL(this.serverUrl);
+        if (url.pathname && url.pathname !== '/') {
+          // Server has a path prefix, adjust socket.io path accordingly
+          socketPath = `${url.pathname.replace(/\/$/, '')}/socket.io`;
+          socketUrl = `${url.protocol}//${url.host}`;
+          console.log(`Using custom socket path: ${socketPath}`);
+        }
+      } catch (e) {
+        console.warn('Could not parse server URL, using as-is');
+      }
+
+      this.socket = io(`${socketUrl}/agent`, {
+        path: socketPath,
         reconnection: true,
         reconnectionAttempts: this.maxReconnectAttempts,
         reconnectionDelay: 1000,
