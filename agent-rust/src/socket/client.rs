@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 type EventCallback<T> = Arc<Mutex<Option<Box<dyn Fn(T) + Send + Sync + 'static>>>>;
+type EventCallbackList<T> = Arc<Mutex<Vec<Box<dyn Fn(T) + Send + Sync + 'static>>>>;
 
 /// Socket.IO client for communication with the server
 pub struct SocketClient {
@@ -29,7 +30,7 @@ pub struct SocketClient {
     // Event callbacks
     on_auth_success: EventCallback<ServerConfigPayload>,
     on_auth_error: EventCallback<String>,
-    on_command: EventCallback<CommandPayload>,
+    on_command: EventCallbackList<CommandPayload>,
     on_start_screen_stream: EventCallback<(u32, u32)>,
     on_stop_screen_stream: EventCallback<()>,
     on_capture_screenshot: EventCallback<()>,
@@ -51,7 +52,7 @@ impl SocketClient {
             computer_id: Arc::new(RwLock::new(None)),
             on_auth_success: Arc::new(Mutex::new(None)),
             on_auth_error: Arc::new(Mutex::new(None)),
-            on_command: Arc::new(Mutex::new(None)),
+            on_command: Arc::new(Mutex::new(Vec::new())),
             on_start_screen_stream: Arc::new(Mutex::new(None)),
             on_stop_screen_stream: Arc::new(Mutex::new(None)),
             on_capture_screenshot: Arc::new(Mutex::new(None)),
@@ -199,7 +200,7 @@ impl SocketClient {
             .boxed()
         });
 
-        // Command handler
+        // Command handler (supports multiple callbacks)
         let on_command_clone = on_command.clone();
         builder = builder.on(incoming::COMMAND, move |payload, _| {
             let on_command = on_command_clone.clone();
@@ -209,8 +210,9 @@ impl SocketClient {
                         match serde_json::from_value::<CommandPayload>(value.clone()) {
                             Ok(data) => {
                                 debug!("Received command: {}", data.command);
-                                if let Some(callback) = on_command.lock().await.as_ref() {
-                                    callback(data);
+                                let callbacks = on_command.lock().await;
+                                for callback in callbacks.iter() {
+                                    callback(data.clone());
                                 }
                             }
                             Err(e) => error!("Failed to parse command: {}", e),
@@ -569,7 +571,7 @@ impl SocketClient {
     where
         F: Fn(CommandPayload) + Send + Sync + 'static,
     {
-        *self.on_command.lock().await = Some(Box::new(callback));
+        self.on_command.lock().await.push(Box::new(callback));
     }
 
     pub async fn on_start_screen_stream<F>(&self, callback: F)
