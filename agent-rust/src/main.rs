@@ -3,6 +3,12 @@
 //! A lightweight monitoring agent written in Rust for improved reliability,
 //! performance, and smaller binary size compared to the Electron version.
 
+// Hide console window on Windows in release builds
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 use netwatch_agent::{
     config::Config,
     services::{
@@ -16,6 +22,35 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+/// Default server URL
+const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech/nw-socket";
+
+/// Show error message box on Windows
+#[cfg(target_os = "windows")]
+fn show_error(title: &str, message: &str) {
+    use std::ffi::OsStr;
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null_mut;
+
+    let title: Vec<u16> = OsStr::new(title).encode_wide().chain(once(0)).collect();
+    let message: Vec<u16> = OsStr::new(message).encode_wide().chain(once(0)).collect();
+
+    unsafe {
+        winapi::um::winuser::MessageBoxW(
+            null_mut(),
+            message.as_ptr(),
+            title.as_ptr(),
+            winapi::um::winuser::MB_OK | winapi::um::winuser::MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_error(title: &str, message: &str) {
+    eprintln!("{}: {}", title, message);
+}
 
 /// Application state shared across services
 pub struct AppState {
@@ -35,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("NetWatch Agent v{} starting...", env!("CARGO_PKG_VERSION"));
 
     // Load configuration
-    let config = match Config::load() {
+    let mut config = match Config::load() {
         Ok(cfg) => {
             info!("Configuration loaded successfully");
             cfg
@@ -46,11 +81,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Check if server URL is configured
+    // Use default server URL if not configured
     if config.server_url.is_empty() {
-        error!("No server URL configured. Please set NETWATCH_SERVER_URL or configure config.json");
-        error!("Example: NETWATCH_SERVER_URL=https://your-server.com cargo run");
-        std::process::exit(1);
+        info!("No server URL in config, using default: {}", DEFAULT_SERVER_URL);
+        config.server_url = DEFAULT_SERVER_URL.to_string();
     }
 
     let config = Arc::new(RwLock::new(config));
@@ -66,9 +100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Connect to server
-    info!("Connecting to server...");
+    info!("Connecting to server: {}", config.read().await.server_url);
     if let Err(e) = socket.connect().await {
-        error!("Failed to connect to server: {}", e);
+        let msg = format!("Failed to connect to server: {}\n\nServer: {}", e, config.read().await.server_url);
+        error!("{}", msg);
+        show_error("NetWatch Agent - Connection Error", &msg);
         std::process::exit(1);
     }
 
