@@ -77,9 +77,26 @@ impl SocketClient {
 
         info!("Connecting to server: {}", server_url);
 
-        // Build the socket URL with namespace (agent namespace)
-        // For URLs with path prefix like https://server.com/path, we connect to https://server.com/path/agent
-        let full_url = format!("{}/agent", server_url.trim_end_matches('/'));
+        // Parse URL to handle path prefixes (e.g., https://domain.com/nw-socket)
+        // Socket.io needs the path to be /prefix/socket.io with namespace as separate param
+        let parsed_url = url::Url::parse(&server_url)
+            .map_err(|e| SocketError::Config(format!("Invalid URL: {}", e)))?;
+
+        let base_url = format!(
+            "{}://{}{}",
+            parsed_url.scheme(),
+            parsed_url.host_str().unwrap_or("localhost"),
+            parsed_url.port().map(|p| format!(":{}", p)).unwrap_or_default()
+        );
+
+        let path_prefix = parsed_url.path().trim_end_matches('/');
+
+        // Build socket.io URL: base + path_prefix + /socket.io + namespace
+        let full_url = if path_prefix.is_empty() || path_prefix == "/" {
+            format!("{}/agent", base_url)
+        } else {
+            format!("{}{}/socket.io/agent", base_url, path_prefix)
+        };
 
         info!("Connecting to socket URL: {}", full_url);
 
