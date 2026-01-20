@@ -29,7 +29,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use crate::tray::SystemTray;
 
 /// Default server URL
-const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech/nw-socket";
+const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech";
 
 /// Initialize Windows COM library
 #[cfg(target_os = "windows")]

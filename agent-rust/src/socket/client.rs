@@ -77,30 +77,19 @@ impl SocketClient {
 
         info!("Connecting to server: {}", server_url);
 
-        // Parse URL to handle path prefixes (e.g., https://domain.com/nw-socket)
-        // rust_socketio uses URL path directly for HTTP requests
-        // So we need to include /socket.io in the path for servers with custom paths
+        // Parse and validate the server URL
+        // rust_socketio expects base URL, it will add /socket.io internally
         let parsed_url = url::Url::parse(&server_url)
             .map_err(|e| SocketError::Config(format!("Invalid URL: {}", e)))?;
 
-        let base_url = format!(
+        // Use just the base URL (scheme + host + port)
+        // rust_socketio handles /socket.io path internally
+        let socket_url = format!(
             "{}://{}{}",
             parsed_url.scheme(),
             parsed_url.host_str().unwrap_or("localhost"),
             parsed_url.port().map(|p| format!(":{}", p)).unwrap_or_default()
         );
-
-        let path_prefix = parsed_url.path().trim_end_matches('/');
-
-        // Build socket.io URL including the /socket.io path component
-        // rust_socketio will make HTTP requests to this path directly
-        let socket_url = if path_prefix.is_empty() || path_prefix == "/" {
-            // No path prefix, use default /socket.io
-            base_url.clone()
-        } else {
-            // Has path prefix (e.g., /nw-socket), append /socket.io
-            format!("{}{}/socket.io", base_url, path_prefix)
-        };
 
         info!("Connecting to socket URL: {} with namespace /agent", socket_url);
 
