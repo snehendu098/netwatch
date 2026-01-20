@@ -3,12 +3,11 @@
 //! A lightweight monitoring agent written in Rust for improved reliability,
 //! performance, and smaller binary size compared to the Electron version.
 
-// Keep console window visible for debugging
-// TODO: Hide console once connection issues are resolved
-// #![cfg_attr(
-//     all(target_os = "windows", not(debug_assertions)),
-//     windows_subsystem = "windows"
-// )]
+// Hide console window on Windows in release builds
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 use netwatch_agent::{
     config::Config,
@@ -101,19 +100,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Connect to server
-    println!("===========================================");
-    println!("NetWatch Agent v{}", env!("CARGO_PKG_VERSION"));
-    println!("Server: {}", config.read().await.server_url);
-    println!("===========================================");
-    println!("Connecting to server...");
+    info!("Connecting to server: {}", config.read().await.server_url);
 
     if let Err(e) = socket.connect().await {
         let msg = format!("Failed to connect to server: {}\n\nServer: {}", e, config.read().await.server_url);
-        eprintln!("ERROR: {}", msg);
+        error!("{}", msg);
         show_error("NetWatch Agent - Connection Error", &msg);
-        println!("\nPress Enter to exit...");
-        let mut input = String::new();
-        let _ = std::io::stdin().read_line(&mut input);
         std::process::exit(1);
     }
 

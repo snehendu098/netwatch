@@ -10,146 +10,372 @@ on:
     branches: [main]
     paths:
       - 'agent-rust/**'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 permissions:
-  contents: write  # Required for creating releases
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  APP_NAME: NetWatch Agent
+  APP_VERSION: "1.0.0"
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Windows
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: netwatch-agent.exe
-            release_name: netwatch-agent-windows-x64.exe
-
-          # macOS Intel (using macos-latest with cross-compile)
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: netwatch-agent
-            release_name: netwatch-agent-darwin-x64
-
-          # macOS Apple Silicon
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: netwatch-agent
-            release_name: netwatch-agent-darwin-arm64
-
-          # Linux
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: netwatch-agent
-            release_name: netwatch-agent-linux-x64
-
+  build-windows:
+    name: Windows Installer
+    runs-on: windows-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcb1-dev libxrandr-dev libxi-dev \
-            libxtst-dev libxdo-dev libssl-dev pkg-config libdbus-1-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-
-      - name: Cache cargo registry
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             agent-rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('agent-rust/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          key: windows-cargo-${{ hashFiles('agent-rust/Cargo.lock') }}
 
-      - name: Build release binary
+      - name: Build release
+        working-directory: agent-rust
+        run: cargo build --release
+
+      - name: Create installer with Inno Setup
+        working-directory: agent-rust
+        shell: pwsh
+        run: |
+          # Create installer script
+          @"
+          [Setup]
+          AppName=NetWatch Agent
+          AppVersion=1.0.0
+          AppPublisher=NetWatch
+          DefaultDirName={autopf}\NetWatch Agent
+          DefaultGroupName=NetWatch Agent
+          OutputDir=..\installer
+          OutputBaseFilename=NetWatch-Agent-Setup-1.0.0-x64
+          Compression=lzma
+          SolidCompression=yes
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          PrivilegesRequired=admin
+          SetupIconFile=assets\icon.ico
+          UninstallDisplayIcon={app}\netwatch-agent.exe
+
+          [Files]
+          Source: "target\release\netwatch-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+          [Icons]
+          Name: "{group}\NetWatch Agent"; Filename: "{app}\netwatch-agent.exe"
+          Name: "{group}\Uninstall NetWatch Agent"; Filename: "{uninstallexe}"
+          Name: "{commonstartup}\NetWatch Agent"; Filename: "{app}\netwatch-agent.exe"; Tasks: startup
+
+          [Tasks]
+          Name: "startup"; Description: "Start NetWatch Agent when Windows starts"; GroupDescription: "Additional options:"
+
+          [Run]
+          Filename: "{app}\netwatch-agent.exe"; Description: "Launch NetWatch Agent"; Flags: nowait postinstall skipifsilent
+          "@ | Out-File -FilePath installer.iss -Encoding UTF8
+
+          mkdir ..\installer -ErrorAction SilentlyContinue
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: installer/*.exe
+          retention-days: 30
+
+  build-macos:
+    name: macOS DMG
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            arch: x64
+          - target: aarch64-apple-darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent-rust/target
+          key: macos-${{ matrix.arch }}-cargo-${{ hashFiles('agent-rust/Cargo.lock') }}
+
+      - name: Build release
         working-directory: agent-rust
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Get version
-        id: version
+      - name: Create .app bundle
         working-directory: agent-rust
-        shell: bash
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          mkdir -p "NetWatch Agent.app/Contents/MacOS"
+          mkdir -p "NetWatch Agent.app/Contents/Resources"
 
-      - name: Rename binary
-        shell: bash
+          cp target/${{ matrix.target }}/release/netwatch-agent "NetWatch Agent.app/Contents/MacOS/"
+          cp assets/icon.ico "NetWatch Agent.app/Contents/Resources/" 2>/dev/null || true
+
+          cat > "NetWatch Agent.app/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>netwatch-agent</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.netwatch.agent</string>
+              <key>CFBundleName</key>
+              <string>NetWatch Agent</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+              <key>LSUIElement</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create DMG
+        working-directory: agent-rust
         run: |
-          mkdir -p release
-          cp agent-rust/target/${{ matrix.target }}/release/${{ matrix.artifact_name }} \
-             release/netwatch-agent-${{ steps.version.outputs.version }}-${{ matrix.target }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          # Install create-dmg
+          brew install create-dmg
 
-      - name: Upload artifact
+          # Create DMG
+          create-dmg \
+            --volname "NetWatch Agent" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "NetWatch Agent.app" 150 190 \
+            --app-drop-link 450 185 \
+            "NetWatch-Agent-1.0.0-${{ matrix.arch }}.dmg" \
+            "NetWatch Agent.app" || true
+
+          # Fallback to simple DMG if create-dmg fails
+          if [ ! -f "NetWatch-Agent-1.0.0-${{ matrix.arch }}.dmg" ]; then
+            hdiutil create -volname "NetWatch Agent" -srcfolder "NetWatch Agent.app" -ov -format UDZO "NetWatch-Agent-1.0.0-${{ matrix.arch }}.dmg"
+          fi
+
+      - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.release_name }}
-          path: release/*
+          name: macos-dmg-${{ matrix.arch }}
+          path: agent-rust/*.dmg
+          retention-days: 30
+
+  build-linux:
+    name: Linux Packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcb1-dev libxrandr-dev libxi-dev \
+            libxtst-dev libxdo-dev libssl-dev pkg-config libdbus-1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent-rust/target
+          key: linux-cargo-${{ hashFiles('agent-rust/Cargo.lock') }}
+
+      - name: Build release
+        working-directory: agent-rust
+        run: cargo build --release
+
+      - name: Create DEB package
+        working-directory: agent-rust
+        run: |
+          mkdir -p deb/DEBIAN
+          mkdir -p deb/usr/bin
+          mkdir -p deb/etc/systemd/system
+          mkdir -p deb/usr/share/applications
+
+          cp target/release/netwatch-agent deb/usr/bin/
+          chmod +x deb/usr/bin/netwatch-agent
+
+          # Control file
+          cat > deb/DEBIAN/control << 'EOF'
+          Package: netwatch-agent
+          Version: 1.0.0
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: NetWatch <support@netwatch.com>
+          Description: NetWatch Monitoring Agent
+           A lightweight monitoring agent for employee activity tracking.
+          EOF
+
+          # Systemd service
+          cat > deb/etc/systemd/system/netwatch-agent.service << 'EOF'
+          [Unit]
+          Description=NetWatch Monitoring Agent
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/netwatch-agent
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          # Desktop file
+          cat > deb/usr/share/applications/netwatch-agent.desktop << 'EOF'
+          [Desktop Entry]
+          Name=NetWatch Agent
+          Comment=NetWatch Monitoring Agent
+          Exec=/usr/bin/netwatch-agent
+          Terminal=false
+          Type=Application
+          Categories=Utility;
+          EOF
+
+          # Post-install script
+          cat > deb/DEBIAN/postinst << 'EOF'
+          #!/bin/bash
+          systemctl daemon-reload
+          systemctl enable netwatch-agent
+          systemctl start netwatch-agent
+          EOF
+          chmod +x deb/DEBIAN/postinst
+
+          # Build DEB
+          dpkg-deb --build deb netwatch-agent-1.0.0-amd64.deb
+
+      - name: Create AppImage
+        working-directory: agent-rust
+        run: |
+          # Download appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Create AppDir
+          mkdir -p AppDir/usr/bin
+          cp target/release/netwatch-agent AppDir/usr/bin/
+
+          # Desktop file
+          cat > AppDir/netwatch-agent.desktop << 'EOF'
+          [Desktop Entry]
+          Name=NetWatch Agent
+          Exec=netwatch-agent
+          Icon=netwatch-agent
+          Type=Application
+          Categories=Utility;
+          EOF
+
+          # AppRun
+          cat > AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          exec "${HERE}/usr/bin/netwatch-agent" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+
+          # Create simple icon (placeholder)
+          convert -size 256x256 xc:navy AppDir/netwatch-agent.png 2>/dev/null || touch AppDir/netwatch-agent.png
+
+          # Build AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir NetWatch-Agent-1.0.0-x86_64.AppImage || true
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            agent-rust/*.deb
+            agent-rust/*.AppImage
           retention-days: 30
 
   release:
     name: Create Release
-    needs: build
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Display structure
-        run: ls -la artifacts/
-
-      - name: Get version from artifact
-        id: version
-        run: |
-          VERSION=$(ls artifacts/netwatch-agent-darwin-arm64/ | sed 's/netwatch-agent-\(.*\)-aarch64.*/\1/')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Display artifacts
+        run: find artifacts -type f -name "*"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: rust-agent-v${{ steps.version.outputs.version }}
-          name: Rust Agent v${{ steps.version.outputs.version }}
+          tag_name: rust-agent-v1.0.0-${{ github.run_number }}
+          name: NetWatch Rust Agent v1.0.0 (Build ${{ github.run_number }})
           body: |
-            ## NetWatch Rust Agent v${{ steps.version.outputs.version }}
+            ## NetWatch Rust Agent v1.0.0
 
             ### Downloads
-            - **Windows**: `netwatch-agent-*-x86_64-pc-windows-msvc.exe`
-            - **macOS Intel**: `netwatch-agent-*-x86_64-apple-darwin`
-            - **macOS Apple Silicon**: `netwatch-agent-*-aarch64-apple-darwin`
-            - **Linux**: `netwatch-agent-*-x86_64-unknown-linux-gnu`
 
-            ### Binary Sizes
-            The Rust agent is ~97% smaller than the Electron version:
-            - Rust: ~2-3 MB
-            - Electron: ~85-90 MB
+            | Platform | File | Description |
+            |----------|------|-------------|
+            | **Windows** | `NetWatch-Agent-Setup-1.0.0-x64.exe` | Installer with auto-start option |
+            | **macOS Intel** | `NetWatch-Agent-1.0.0-x64.dmg` | Drag & drop installer |
+            | **macOS Apple Silicon** | `NetWatch-Agent-1.0.0-arm64.dmg` | Drag & drop installer |
+            | **Linux** | `netwatch-agent-1.0.0-amd64.deb` | Debian/Ubuntu package |
+            | **Linux** | `NetWatch-Agent-1.0.0-x86_64.AppImage` | Portable AppImage |
 
-            ### Usage
+            ### Installation
+
+            **Windows:** Run the installer and follow the prompts.
+
+            **macOS:** Open the DMG and drag NetWatch Agent to Applications.
+
+            **Linux (Debian/Ubuntu):**
             ```bash
-            # Set server URL and run
-            NETWATCH_SERVER_URL=https://your-server.com ./netwatch-agent
+            sudo dpkg -i netwatch-agent-1.0.0-amd64.deb
             ```
-          files: artifacts/**/*
+
+            **Linux (AppImage):**
+            ```bash
+            chmod +x NetWatch-Agent-1.0.0-x86_64.AppImage
+            ./NetWatch-Agent-1.0.0-x86_64.AppImage
+            ```
+
+            ### Server
+            Pre-configured to connect to: `https://do.roydevelops.tech/nw-socket`
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
           draft: false
           prerelease: false
         env:
