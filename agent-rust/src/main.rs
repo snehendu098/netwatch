@@ -29,7 +29,9 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use crate::tray::SystemTray;
 
 /// Default server URL
-const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech/nw-socket";
+// Use base URL - rust_socketio uses /socket.io path internally
+// Server now accepts both /socket.io and /nw-socket/socket.io
+const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech";
 
 /// Initialize Windows COM library
 #[cfg(target_os = "windows")]

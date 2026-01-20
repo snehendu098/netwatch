@@ -1,0 +1,13 @@
+[2m2026-01-20T12:30:04.078301Z[0m [32m INFO[0m [2mnetwatch_agent[0m[2m:[0m NetWatch Agent v1.0.0 starting...
+[2m2026-01-20T12:30:04.078753Z[0m [32m INFO[0m [2mnetwatch_agent[0m[2m:[0m Configuration loaded successfully
+[2m2026-01-20T12:30:04.078767Z[0m [32m INFO[0m [2mnetwatch_agent[0m[2m:[0m No server URL in config, using default: https://do.roydevelops.tech/nw-socket
+[2m2026-01-20T12:30:04.088974Z[0m [32m INFO[0m [2mnetwatch_agent[0m[2m:[0m System tray created successfully
+[2m2026-01-20T12:30:04.089522Z[0m [32m INFO[0m [2mnetwatch_agent[0m[2m:[0m Connecting to server: https://do.roydevelops.tech/nw-socket
+[2m2026-01-20T12:30:04.089554Z[0m [32m INFO[0m [2mnetwatch_agent::socket::client[0m[2m:[0m Connecting to server: https://do.roydevelops.tech/nw-socket
+[2m2026-01-20T12:30:04.089606Z[0m [32m INFO[0m [2mnetwatch_agent::socket::client[0m[2m:[0m Connecting to socket URL: https://do.roydevelops.tech/nw-socket with namespace /agent
+[2m2026-01-20T12:30:04.089614Z[0m [32m INFO[0m [2mnetwatch_agent::socket::client[0m[2m:[0m Testing connectivity to: https://do.roydevelops.tech/nw-socket/socket.io/?EIO=4&transport=polling
+[2m2026-01-20T12:30:04.344779Z[0m [32m INFO[0m [2mnetwatch_agent::socket::client[0m[2m:[0m HTTP test successful: status=200 OK, url=https://do.roydevelops.tech/nw-socket/socket.io/?EIO=4&transport=polling
+[2m2026-01-20T12:30:04.344849Z[0m [32m INFO[0m [2mnetwatch_agent::socket::client[0m[2m:[0m Response body preview: 0{"sid":"sz1CAQci-YRgbK1-AAAp","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}
+[2m2026-01-20T12:30:04.628778Z[0m [31mERROR[0m [2mnetwatch_agent[0m[2m:[0m Failed to connect to server: Connection error: EngineIO Error
+
+Server: https://do.roydevelops.tech/nw-socket

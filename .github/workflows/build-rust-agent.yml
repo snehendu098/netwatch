@@ -124,58 +124,83 @@ jobs:
       - name: Create .app bundle
         working-directory: agent-rust
         run: |
-          mkdir -p "NetWatch Agent.app/Contents/MacOS"
-          mkdir -p "NetWatch Agent.app/Contents/Resources"
+          APP_NAME="NetWatch Agent"
+          APP_DIR="${APP_NAME}.app"
 
-          cp target/${{ matrix.target }}/release/netwatch-agent "NetWatch Agent.app/Contents/MacOS/"
-          cp assets/icon.ico "NetWatch Agent.app/Contents/Resources/" 2>/dev/null || true
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
 
-          cat > "NetWatch Agent.app/Contents/Info.plist" << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>netwatch-agent</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.netwatch.agent</string>
-              <key>CFBundleName</key>
-              <string>NetWatch Agent</string>
-              <key>CFBundleVersion</key>
-              <string>1.0.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0.0</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-              <key>LSUIElement</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+          # Copy binary
+          cp "target/${{ matrix.target }}/release/netwatch-agent" "${APP_DIR}/Contents/MacOS/"
+          chmod +x "${APP_DIR}/Contents/MacOS/netwatch-agent"
+
+          # Create Info.plist
+          cat > "${APP_DIR}/Contents/Info.plist" << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>netwatch-agent</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.netwatch.agent</string>
+    <key>CFBundleName</key>
+    <string>NetWatch Agent</string>
+    <key>CFBundleDisplayName</key>
+    <string>NetWatch Agent</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+</dict>
+</plist>
+PLIST
+
+          # Create PkgInfo
+          echo -n "APPL????" > "${APP_DIR}/Contents/PkgInfo"
+
+          # Verify app bundle
+          echo "App bundle contents:"
+          ls -laR "${APP_DIR}"
 
       - name: Create DMG
         working-directory: agent-rust
         run: |
-          # Install create-dmg
-          brew install create-dmg
+          APP_NAME="NetWatch Agent"
+          DMG_NAME="NetWatch-Agent-1.0.0-${{ matrix.arch }}.dmg"
 
-          # Create DMG
-          create-dmg \
-            --volname "NetWatch Agent" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --icon "NetWatch Agent.app" 150 190 \
-            --app-drop-link 450 185 \
-            "NetWatch-Agent-1.0.0-${{ matrix.arch }}.dmg" \
-            "NetWatch Agent.app" || true
+          # Create a temporary directory for DMG contents
+          mkdir -p dmg_contents
+          cp -R "${APP_NAME}.app" dmg_contents/
 
-          # Fallback to simple DMG if create-dmg fails
-          if [ ! -f "NetWatch-Agent-1.0.0-${{ matrix.arch }}.dmg" ]; then
-            hdiutil create -volname "NetWatch Agent" -srcfolder "NetWatch Agent.app" -ov -format UDZO "NetWatch-Agent-1.0.0-${{ matrix.arch }}.dmg"
-          fi
+          # Create a symbolic link to /Applications
+          ln -s /Applications dmg_contents/Applications
+
+          # Create DMG using hdiutil (more reliable than create-dmg)
+          hdiutil create -volname "NetWatch Agent" \
+            -srcfolder dmg_contents \
+            -ov -format UDBZ \
+            "${DMG_NAME}"
+
+          # Verify DMG was created
+          echo "Created DMG:"
+          ls -la "${DMG_NAME}"
+
+          # Test DMG integrity
+          echo "Testing DMG integrity..."
+          hdiutil verify "${DMG_NAME}" || echo "Warning: DMG verification had issues"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
