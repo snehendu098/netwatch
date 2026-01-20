@@ -99,8 +99,11 @@ dirs = "5"
 # System tray
 tray-icon = "0.14"
 
+# Ctrl+C handling
+ctrlc = "3.4"
+
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "tlhelp32", "handleapi", "psapi", "winnt", "sysinfoapi"] }
+winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "tlhelp32", "handleapi", "psapi", "winnt", "sysinfoapi", "combaseapi", "objbase"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"

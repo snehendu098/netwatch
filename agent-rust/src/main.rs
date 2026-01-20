@@ -31,6 +31,21 @@ use crate::tray::SystemTray;
 /// Default server URL
 const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech/nw-socket";
 
+/// Initialize Windows COM library
+#[cfg(target_os = "windows")]
+fn init_windows() {
+    use winapi::um::combaseapi::CoInitializeEx;
+    use winapi::um::objbase::COINIT_APARTMENTTHREADED;
+
+    unsafe {
+        // Initialize COM for the main thread (required for shell operations)
+        let _ = CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn init_windows() {}
+
 /// Show error message box on Windows
 #[cfg(target_os = "windows")]
 fn show_error(title: &str, message: &str) {
@@ -74,14 +89,42 @@ enum StatusUpdate {
 }
 
 fn main() {
-    // Initialize logging
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(
-            EnvFilter::from_default_env()
-                .add_directive("netwatch_agent=info".parse().unwrap()),
-        )
-        .init();
+    // Initialize Windows COM (must be done before any shell operations)
+    init_windows();
+
+    // Initialize logging to file on Windows (since console is hidden)
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(data_dir) = dirs::data_local_dir() {
+            let log_dir = data_dir.join("NetWatch");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let log_file = log_dir.join("agent.log");
+
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_file)
+            {
+                tracing_subscriber::registry()
+                    .with(fmt::layer().with_writer(std::sync::Mutex::new(file)))
+                    .with(EnvFilter::from_default_env().add_directive("netwatch_agent=info".parse().unwrap()))
+                    .init();
+            } else {
+                // Fallback to no logging if file can't be opened
+                tracing_subscriber::registry()
+                    .with(EnvFilter::from_default_env().add_directive("netwatch_agent=info".parse().unwrap()))
+                    .init();
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env().add_directive("netwatch_agent=info".parse().unwrap()))
+            .init();
+    }
 
     info!("NetWatch Agent v{} starting...", env!("CARGO_PKG_VERSION"));
 
@@ -113,7 +156,7 @@ fn main() {
     let exit_requested = Arc::new(AtomicBool::new(false));
     let exit_flag = exit_requested.clone();
 
-    // Create the system tray
+    // Try to create the system tray (non-fatal if it fails)
     let tray = match SystemTray::new(&server_url, exit_requested.clone()) {
         Ok(t) => {
             info!("System tray created successfully");
@@ -126,14 +169,15 @@ fn main() {
     };
 
     // Spawn the agent runtime in a background thread
+    let agent_exit_flag = exit_flag.clone();
     let agent_handle = std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async move {
-            run_agent(config, status_tx, exit_flag).await;
+            run_agent(config, status_tx, agent_exit_flag).await;
         });
     });
 
-    // Run the tray event loop on the main thread
+    // Run the tray event loop on the main thread (or just wait if no tray)
     if let Some(tray) = tray {
         tray::run_event_loop(|| {
             // Check for status updates
@@ -156,8 +200,21 @@ fn main() {
         });
 
         info!("Tray event loop ended, shutting down...");
+
+        // Signal the agent to stop
+        exit_requested.store(true, Ordering::SeqCst);
     } else {
-        // No tray - just wait for the agent thread
+        // No tray - run without UI, just wait for Ctrl+C or agent completion
+        info!("Running without system tray...");
+
+        // Set up Ctrl+C handler for graceful shutdown
+        let ctrlc_flag = exit_flag.clone();
+        let _ = ctrlc::set_handler(move || {
+            info!("Ctrl+C received, shutting down...");
+            ctrlc_flag.store(true, Ordering::SeqCst);
+        });
+
+        // Wait for agent thread to finish
         let _ = agent_handle.join();
     }
 
