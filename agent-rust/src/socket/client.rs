@@ -77,11 +77,11 @@ impl SocketClient {
 
         info!("Connecting to server: {}", server_url);
 
-        // Parse URL to handle path prefixes
-        let (socket_url, socket_path) = Self::parse_server_url(&server_url)?;
+        // Build the socket URL with namespace (agent namespace)
+        // For URLs with path prefix like https://server.com/path, we connect to https://server.com/path/agent
+        let full_url = format!("{}/agent", server_url.trim_end_matches('/'));
 
-        // Build the socket URL with namespace
-        let full_url = format!("{}/agent", socket_url);
+        info!("Connecting to socket URL: {}", full_url);
 
         // Clone Arcs for callbacks
         let connected = self.connected.clone();
@@ -101,16 +101,11 @@ impl SocketClient {
         let on_list_directory = self.on_list_directory.clone();
 
         // Build client
-        let mut builder = ClientBuilder::new(&full_url)
-            .transport_type(rust_socketio::TransportType::Websocket)
+        let builder = ClientBuilder::new(&full_url)
+            .transport_type(rust_socketio::TransportType::WebsocketUpgrade)
             .reconnect(true)
             .reconnect_delay(1000, 30000)
             .max_reconnect_attempts(10);
-
-        // Set custom socket path if needed
-        if socket_path != "/socket.io" {
-            builder = builder.opening_header("path", socket_path.clone());
-        }
 
         // Connection event handler
         let connected_clone = connected.clone();
@@ -416,22 +411,6 @@ impl SocketClient {
         self.start_heartbeat();
 
         Ok(())
-    }
-
-    /// Parse server URL to extract base URL and socket path
-    fn parse_server_url(url: &str) -> Result<(String, String), SocketError> {
-        let parsed = url::Url::parse(url).map_err(|e| SocketError::Config(e.to_string()))?;
-
-        let path = parsed.path();
-        let (socket_url, socket_path) = if path != "/" && !path.is_empty() {
-            let base = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or("localhost"));
-            let port = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
-            (format!("{}{}", base, port), format!("{}/socket.io", path.trim_end_matches('/')))
-        } else {
-            (url.to_string(), "/socket.io".to_string())
-        };
-
-        Ok((socket_url, socket_path))
     }
 
     /// Send authentication to server
