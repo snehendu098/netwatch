@@ -78,14 +78,21 @@ impl SocketClient {
         info!("Connecting to server: {}", server_url);
 
         // Validate the server URL
-        let _parsed_url = url::Url::parse(&server_url)
+        let parsed_url = url::Url::parse(&server_url)
             .map_err(|e| SocketError::Config(format!("Invalid URL: {}", e)))?;
 
-        // Use the URL as-is - it should include the full path to socket.io endpoint
-        // e.g., https://do.roydevelops.tech/nw-socket/socket.io
-        let socket_url = server_url.trim_end_matches('/').to_string();
+        // For URLs with path prefix (e.g., /nw-socket), use base URL
+        // rust_socketio will add /socket.io internally
+        let socket_url = format!(
+            "{}://{}{}{}",
+            parsed_url.scheme(),
+            parsed_url.host_str().unwrap_or("localhost"),
+            parsed_url.port().map(|p| format!(":{}", p)).unwrap_or_default(),
+            parsed_url.path().trim_end_matches('/')
+        );
 
         info!("Connecting to socket URL: {} with namespace /agent", socket_url);
+        info!("rust_socketio will append /socket.io to make requests");
 
         // Clone Arcs for callbacks
         let connected = self.connected.clone();

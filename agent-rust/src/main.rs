@@ -29,7 +29,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use crate::tray::SystemTray;
 
 /// Default server URL
-const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech/nw-socket/socket.io";
+const DEFAULT_SERVER_URL: &str = "https://do.roydevelops.tech/nw-socket";
 
 /// Initialize Windows COM library
 #[cfg(target_os = "windows")]
@@ -102,15 +102,19 @@ fn main() {
 
             if let Ok(file) = std::fs::OpenOptions::new()
                 .create(true)
-                .append(true)
+                .write(true)
+                .truncate(true)  // Start fresh each time
                 .open(&log_file)
             {
+                // Enable debug logging for socket.io to diagnose connection issues
                 tracing_subscriber::registry()
                     .with(fmt::layer().with_writer(std::sync::Mutex::new(file)))
-                    .with(EnvFilter::from_default_env().add_directive("netwatch_agent=info".parse().unwrap()))
+                    .with(EnvFilter::from_default_env()
+                        .add_directive("netwatch_agent=debug".parse().unwrap())
+                        .add_directive("rust_socketio=debug".parse().unwrap())
+                        .add_directive("engineio=debug".parse().unwrap()))
                     .init();
             } else {
-                // Fallback to no logging if file can't be opened
                 tracing_subscriber::registry()
                     .with(EnvFilter::from_default_env().add_directive("netwatch_agent=info".parse().unwrap()))
                     .init();
