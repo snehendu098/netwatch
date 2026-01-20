@@ -194,7 +194,7 @@ pub struct AuthSuccessPayload {
 }
 
 /// Server configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerConfigPayload {
     pub screenshot_interval: Option<u64>,
