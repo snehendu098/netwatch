@@ -101,7 +101,7 @@ impl SocketClient {
         let on_list_directory = self.on_list_directory.clone();
 
         // Build client
-        let builder = ClientBuilder::new(&full_url)
+        let mut builder = ClientBuilder::new(&full_url)
             .transport_type(rust_socketio::TransportType::WebsocketUpgrade)
             .reconnect(true)
             .reconnect_delay(1000, 30000)
