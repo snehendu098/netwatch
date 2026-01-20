@@ -92,7 +92,28 @@ impl SocketClient {
         );
 
         info!("Connecting to socket URL: {} with namespace /agent", socket_url);
-        info!("rust_socketio will append /socket.io to make requests");
+
+        // Test HTTP connectivity first to get better error messages
+        // The actual socket.io endpoint is at /socket.io under the base path
+        let test_url = format!("{}/socket.io/?EIO=4&transport=polling", socket_url);
+        info!("Testing connectivity to: {}", test_url);
+
+        match reqwest::Client::new()
+            .get(&test_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                info!("HTTP test successful: status={}, url={}", resp.status(), test_url);
+                if let Ok(body) = resp.text().await {
+                    info!("Response body preview: {}", &body[..body.len().min(200)]);
+                }
+            }
+            Err(e) => {
+                error!("HTTP test failed: {} - URL: {}", e, test_url);
+            }
+        }
 
         // Clone Arcs for callbacks
         let connected = self.connected.clone();
